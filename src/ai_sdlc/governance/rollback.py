@@ -21,10 +21,13 @@ def _git(workspace_root: Path, *args: str) -> subprocess.CompletedProcess:
 
 
 def commit_task(workspace_root: Path, task_id: str, message: str) -> bool:
-    """Stage everything and commit with the task marker. Returns False when
-    there is nothing to commit or git is unavailable."""
+    """Stage the app changes (framework state excluded) and commit with the
+    task marker. Returns False when there is nothing to commit or git is
+    unavailable."""
     if _git(workspace_root, "add", "-A").returncode != 0:
         return False
+    # framework state is not part of the task's code change
+    _git(workspace_root, "reset", "-q", "--", ".ai-sdlc")
     result = _git(
         workspace_root, "commit", "-q", "-m", f"[ai-sdlc:{task_id}] {message}"
     )

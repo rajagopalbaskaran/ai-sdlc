@@ -1,3 +1,4 @@
+import subprocess
 import time
 
 from ai_sdlc.adapters.base import Adapter, AdapterResult
@@ -148,6 +149,95 @@ def test_plan_approval_gate_blocks_rejection(tmp_workspace):
     assert summary.status == "halted"
     doc = PlanDocument.load(ws.plan_path)
     assert all(t.status == "pending" for t in doc.tasks)
+
+
+PLAN_ONE = """# Implementation Plan
+
+### Task 1: Only
+
+```yaml
+id: T1
+status: pending
+depends_on: []
+persona: developer
+```
+
+Do the only thing.
+"""
+
+
+class WritingAdapter(Adapter):
+    """Writes a real file into the workspace, like a real coding agent."""
+
+    name = "writing"
+
+    def __init__(self, root, content="print('hi')\n"):
+        self.root = root
+        self.content = content
+
+    def execute(self, persona, context, task):
+        path = self.root / f"src_{task.id}.py"
+        path.write_text(self.content, encoding="utf-8")
+        return AdapterResult(ok=True, output="wrote file")  # note: no files_changed reported
+
+
+def _git(cwd, *args):
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+
+
+def _make_git_repo(root):
+    _git(root, "init", "-q")
+    _git(root, "config", "user.name", "test")
+    _git(root, "config", "user.email", "t@t.local")
+    (root / "base.txt").write_text("base\n", encoding="utf-8")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "base")
+
+
+def test_detected_secret_blocks_task(tmp_workspace):
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    adapter = WritingAdapter(tmp_workspace, content='PASSWORD = "supersecret123"\n')
+    engine = Engine(ws, adapter, config={"retry_budget": 0}, input_fn=approve_all)
+    summary = engine.run(parallel=False)
+    assert summary.status == "halted"
+    assert PlanDocument.load(ws.plan_path).get("T1").status == "blocked"
+    assert "policy" in engine.audit.path.read_text(encoding="utf-8")
+
+
+def test_auto_commit_per_task_excludes_state(tmp_workspace):
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    _make_git_repo(tmp_workspace)
+    engine = Engine(
+        ws, WritingAdapter(tmp_workspace), config={"commit_mode": "auto"}, input_fn=approve_all
+    )
+    assert engine.run(parallel=False).status == "completed"
+    subjects = _git(tmp_workspace, "log", "--format=%s").stdout
+    assert "[ai-sdlc:T1]" in subjects
+    shown = _git(tmp_workspace, "show", "--name-only", "--format=", "HEAD").stdout
+    assert "src_T1.py" in shown
+    assert ".ai-sdlc" not in shown
+
+
+def test_commit_mode_ask_rejection_skips_commit(tmp_workspace):
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    _make_git_repo(tmp_workspace)
+    engine = Engine(
+        ws,
+        WritingAdapter(tmp_workspace),
+        config={"commit_mode": "ask"},
+        input_fn=lambda _: "r",  # plan pre-approved in seed; only commit asks
+    )
+    assert engine.run(parallel=False).status == "completed"
+    subjects = _git(tmp_workspace, "log", "--format=%s").stdout
+    assert "[ai-sdlc:T1]" not in subjects
+
+
+def test_no_git_repo_skips_commit_quietly(tmp_workspace):
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    engine = Engine(
+        ws, WritingAdapter(tmp_workspace), config={"commit_mode": "auto"}, input_fn=approve_all
+    )
+    assert engine.run(parallel=False).status == "completed"
 
 
 def test_plan_approval_gate_accepts_and_persists(tmp_workspace):

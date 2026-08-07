@@ -3,6 +3,7 @@ adapter: mock              # primary adapter: mock | claude-code
 fallback_adapters: []      # tried in order when the primary adapter fails
 retry_budget: 2            # retry attempts per task after the first failure
 parallel: false            # run independent tasks concurrently
+commit_mode: auto          # per-task local git commits: auto | ask | off
 diff_limit: 500            # max changed lines per task (policy guardrail)
 approval_gates:            # stages requiring human approval at their exit gate
   - plan

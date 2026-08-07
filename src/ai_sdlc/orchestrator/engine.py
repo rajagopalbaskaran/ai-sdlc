@@ -20,9 +20,11 @@ from typing import Callable
 import yaml
 
 from ai_sdlc.adapters.base import Adapter
+from ai_sdlc.changes import diff, snapshot
 from ai_sdlc.governance.approvals import request_approval
 from ai_sdlc.governance.policy import check_policies
 from ai_sdlc.governance.retry import RetryPolicy
+from ai_sdlc.governance.rollback import commit_task
 from ai_sdlc.observability.audit import AuditLog
 from ai_sdlc.orchestrator.dag import detect_cycles, eligible_tasks, terminal
 from ai_sdlc.orchestrator.gates import GateContext, entry_gate, exit_gate
@@ -108,6 +110,7 @@ class Engine:
         self.audit.event("task_started", task=task.id, persona=task.persona)
         context = self._context_for(task)
         retry = RetryPolicy(self.config.get("retry_budget", 2))
+        before = snapshot(self.ws.root)
 
         def attempt(last_error: str | None):
             ctx = context
@@ -124,8 +127,11 @@ class Engine:
             self._set_status(doc, task.id, "blocked")
             return
 
+        # trust the adapter's report when present, but always verify what
+        # actually changed on disk
+        files_changed = sorted(set(result.files_changed) | set(diff(before, snapshot(self.ws.root))))
         violations = check_policies(
-            result.files_changed, self.ws.root, self.config.get("diff_limit", 500)
+            files_changed, self.ws.root, self.config.get("diff_limit", 500)
         )
         if violations:
             self.audit.event(
@@ -135,7 +141,27 @@ class Engine:
             return
 
         self._set_status(doc, task.id, "completed")
-        self.audit.event("task_completed", task=task.id)
+        self.audit.event("task_completed", task=task.id, files_changed=len(files_changed))
+        self._maybe_commit(task, files_changed)
+
+    def _maybe_commit(self, task: Task, files_changed: list[str]) -> None:
+        """Local per-task save-point in the TARGET workspace. Never pushes.
+        commit_mode: auto (default) | ask (human per commit) | off."""
+        mode = self.config.get("commit_mode", "auto")
+        if mode == "off" or not files_changed:
+            return
+        if not (self.ws.root / ".git").is_dir():
+            return
+        if mode == "ask":
+            decision = request_approval(
+                f"Commit changes for task {task.id}?", input_fn=self.input_fn
+            )
+            self.audit.event("approval", gate=f"commit:{task.id}", decision=decision)
+            if decision != "approve":
+                return
+        with self._lock:
+            committed = commit_task(self.ws.root, task.id, task.title)
+        self.audit.event("commit", task=task.id, committed=committed)
 
     # --- the run loop ---
 
