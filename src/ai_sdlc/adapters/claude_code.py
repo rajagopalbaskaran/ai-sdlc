@@ -1,0 +1,59 @@
+"""Adapter for Claude Code running headless (claude -p)."""
+
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from ai_sdlc.adapters.base import Adapter, AdapterResult
+
+if TYPE_CHECKING:
+    from ai_sdlc.state.plan import Task
+
+PROMPT_TEMPLATE = """You are acting as the {persona} persona of the ai-sdlc framework.
+
+Follow the persona definition, project profile, and knowledge base below.
+Complete ONLY the single task given. Report what you changed.
+
+{context}
+
+## Your task
+
+{task_title}
+
+{task_body}
+"""
+
+
+class ClaudeCodeAdapter(Adapter):
+    name = "claude-code"
+
+    def __init__(self, command: str = "claude", timeout: int = 600, workdir: Path | None = None):
+        self.command = command
+        self.timeout = timeout
+        self.workdir = Path(workdir) if workdir else None
+
+    def execute(self, persona: str, context: str, task: "Task") -> AdapterResult:
+        prompt = PROMPT_TEMPLATE.format(
+            persona=persona,
+            context=context,
+            task_title=task.title,
+            task_body=task.body,
+        )
+        argv = [self.command, "-p", prompt, "--output-format", "text"]
+        try:
+            proc = subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+                cwd=self.workdir,
+            )
+        except FileNotFoundError as exc:
+            return AdapterResult(ok=False, error=f"claude binary not found: {exc}")
+        except subprocess.TimeoutExpired:
+            return AdapterResult(ok=False, error=f"claude timed out after {self.timeout}s")
+        if proc.returncode != 0:
+            return AdapterResult(ok=False, output=proc.stdout, error=proc.stderr.strip() or f"exit {proc.returncode}")
+        return AdapterResult(ok=True, output=proc.stdout)

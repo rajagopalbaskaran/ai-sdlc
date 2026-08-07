@@ -1,0 +1,11 @@
+# ai-sdlc project configuration
+adapter: mock              # primary adapter: mock | claude-code
+fallback_adapters: []      # tried in order when the primary adapter fails
+retry_budget: 2            # retry attempts per task after the first failure
+parallel: false            # run independent tasks concurrently
+diff_limit: 500            # max changed lines per task (policy guardrail)
+approval_gates:            # stages requiring human approval at their exit gate
+  - plan
+  - deploy_ready
+claude_command: claude     # binary used by the claude-code adapter
+task_timeout_seconds: 600
