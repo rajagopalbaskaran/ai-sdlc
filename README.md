@@ -24,37 +24,149 @@ Development <-> Validation <-> Testing
 Deployment
 ```
 
-The framework follows **spec-driven development**: specifications (requirement analysis, implementation plan) are the source of truth, and agents generate code from specs - never the other way around. What sets it apart from classic spec-driven tooling is that execution is **stateful and governed**: a dependency graph with gates, human approvals, bounded retries, rollback, and dynamic re-planning.
+The framework follows **spec-driven development**: specifications (requirement analysis, implementation plan) are the source of truth, and agents generate code from specs - never the other way around. What sets it apart from classic spec-driven tooling is that execution is **stateful and governed**: a dependency graph with gates, human approvals, bounded retries, fallback, rollback, and dynamic re-planning.
 
 - **Knowledge Base** - functional docs, technical docs, architecture, API/DB design, coding standards. Every agent reasons against this context.
-- **Project Profile** - the project's stack and conventions (language, framework, database, testing tools), established once and used by every agent.
-- **Implementation Plan as execution state** - the plan is not just a document; every task carries a status (pending / in_progress / waiting_approval / completed / blocked / rolled_back) in a small yaml block that only the orchestrator writes. Agents read it, execute against it, and update it. It is the single source of truth, which also gives the framework **resume capability**: stop anytime (Ctrl+C is safe), then `ai-sdlc continue` picks up exactly where work left off.
-- **Stateless persona agents** - Requirement Analyst, Implementation Planner, Developer, Validator, Tester, Deployment Engineer. Each has defined responsibilities, inputs, outputs, and constraints; each derives all context from the Knowledge Base, Project Profile, and current Plan.
-- **Tool-independent adapters** - the framework defines capabilities; adapters translate them to a specific AI coding assistant. Implemented today: Claude Code (headless) and a deterministic Mock for offline runs, tests, and fallback.
+- **Project Profile** - the project's stack and conventions, established once and used by every agent.
+- **Implementation Plan as execution state** - every task carries a status (pending / in_progress / waiting_approval / completed / blocked / rolled_back) in a small yaml block that only the orchestrator writes. It is the single source of truth, which also gives the framework **resume capability**: stop anytime (Ctrl+C is safe), then `ai-sdlc continue` picks up exactly where work left off.
+- **Stateless persona agents** - Requirement Analyst, Implementation Planner, Developer, Validator, Tester, Deployment Engineer. Each derives all context from the Knowledge Base, Project Profile, and current Plan.
+- **Tool-independent adapters** - implemented today: Claude Code (headless) and a deterministic Mock for offline runs, tests, and fallback.
 
-## How It Works (like git)
+## Prerequisites
 
-The engine is installed once; each target project gets its own state folder:
+| Requirement | Why | Check |
+|---|---|---|
+| Python 3.11+ | the framework is a Python package | `py --version` (Windows) or `python3 --version` |
+| pip | installs the framework | `py -m pip --version` |
+| git | per-task commits, rollback, feature branches | `git --version` |
+| Node.js 18+ | required by the Claude Code CLI installer | `node --version` |
+| Claude Code CLI | the real AI adapter (`claude` must be on PATH) | `claude --version` |
+| Claude subscription or API key | Claude Code needs an authenticated session | run `claude` once and sign in |
+
+Notes:
+- **Mock-only usage needs none of the Claude/Node rows.** The framework, its tests, and offline demos run fully without an LLM.
+- Install Claude Code: `npm install -g @anthropic-ai/claude-code` (or the native installer from Anthropic docs), then run `claude` once to authenticate.
+
+## Getting Started - step by step
+
+### Step 1: Install the framework (once per machine)
+
+Just use it - one line, no clone needed:
 
 ```
-pip install -e .          # install the tool once (from this repo)
-cd any-project
-ai-sdlc init              # plants .ai-sdlc/ into the project
+py -m pip install git+https://github.com/rajagopalbaskaran/ai-sdlc.git
 ```
 
+Or develop it - clone and install editable:
+
 ```
-any-project/
-  .ai-sdlc/               # travels WITH the project (like .git/)
-    config.yaml           # adapter choice, retry budget, gates
-    project-profile.md    # stack and conventions, set once
-    knowledge-base/       # docs every agent reads
-    plan/                 # implementation-plan.md = execution state
-    personas/             # agent definitions, customizable per project
-    runs/                 # audit logs, metrics, reports
-  src/ ...                # the application (built by the agents)
+git clone https://github.com/rajagopalbaskaran/ai-sdlc.git
+cd ai-sdlc
+py -m pip install -e .[dev]
+py -m pytest            # optional: 81 tests, all offline, ~10s
 ```
 
-## CLI
+Either way the installed package is named `ai-sdlc` (check with `pip show ai-sdlc`) and the `ai-sdlc` command lands on your PATH. Like git: the tool is installed once; each project gets its own state folder.
+
+### Step 2: Create your project workspace
+
+```
+mkdir my-app
+cd my-app
+git init                # enables per-task commits, rollback, branches
+ai-sdlc init            # plants the .ai-sdlc/ state folder
+```
+
+`init` creates the templates you will fill in:
+
+```
+my-app/
+  .ai-sdlc/
+    config.yaml           <- adapter and governance settings
+    project-profile.md    <- your stack (fill this in, step 3)
+    knowledge-base/       <- project docs (fill this in, step 3)
+    plan/
+      implementation-plan.md   <- starts empty; the planner fills it
+    personas/             <- 6 agent definitions (customizable)
+    runs/                 <- audit logs, metrics, reports
+```
+
+### Step 3: Fill in the templates
+
+1. **`.ai-sdlc/project-profile.md`** - your stack, so agents never have to ask:
+
+```markdown
+# Project Profile
+- Language: Python 3.11
+- Framework: FastAPI
+- Database: SQLite
+- Testing: pytest
+- Run command: uvicorn app.main:app
+- Conventions: type hints everywhere, black formatting
+```
+
+2. **`.ai-sdlc/knowledge-base/`** - drop in markdown docs the agents should know: architecture decisions, API conventions, coding standards, existing module descriptions (for brownfield work). For a brand new project this can start empty; agents will grow it.
+
+3. **`.ai-sdlc/config.yaml`** - pick your adapter and governance settings:
+
+```yaml
+adapter: claude-code        # or: mock (offline dry-runs)
+fallback_adapters: [mock]   # tried in order if the primary fails
+retry_budget: 2
+parallel: false
+commit_mode: auto           # auto | ask | off (per-task local commits)
+diff_limit: 500
+approval_gates: [plan, deploy_ready]
+claude_command: claude
+task_timeout_seconds: 600
+```
+
+4. **`.ai-sdlc/personas/*.md`** (optional) - tune the six agent definitions for this project, e.g. add rules to `developer.md`.
+
+### Step 4: Write your requirement
+
+Any plain markdown/text file, anywhere in the workspace:
+
+```markdown
+# requirement.md
+Build a URL shortener service:
+- POST /shorten accepts a long URL, returns a short code
+- GET /{code} redirects to the original URL
+- GET /stats/{code} returns click count
+- SQLite storage, input validation, tests included
+```
+
+### Step 5: Run the pipeline
+
+```
+ai-sdlc analyze requirement.md   # agent writes plan/requirement-analysis.md
+#   -> YOU review it: answer ambiguity questions, fix wrong assumptions
+
+ai-sdlc plan                     # agent appends tasks to implementation-plan.md
+#   -> YOU review the tasks and dependencies in your editor
+
+ai-sdlc run                      # asks: Approve the implementation plan? [a/r/m]
+#   -> agents execute task by task on a feature branch:
+#      retries, policy checks, per-task commits, audit logging
+#   -> at the end (if a git remote exists): Push branch? [a/r/m]
+```
+
+You type framework commands in the terminal. You never prompt the AI directly - the framework calls Claude Code headless behind the scenes, one governed task at a time.
+
+### Step 6: Observe, steer, recover
+
+```
+ai-sdlc status                   # every task and its state
+ai-sdlc report                   # metrics + timeline markdown
+Ctrl+C                           # safe-stop anytime, state stays consistent
+ai-sdlc continue                 # resume exactly where it stopped
+ai-sdlc rollback T3              # revert exactly task T3 (confirmation-gated)
+ai-sdlc replan changed-req.md    # requirement changed mid-flight:
+                                 #   diff plan, keep completed work, re-approve
+ai-sdlc push                     # publish the feature branch (confirmation-gated)
+```
+
+## CLI Reference
 
 ```
 ai-sdlc init                       # plant .ai-sdlc/ into the workspace
@@ -64,6 +176,9 @@ ai-sdlc run [--parallel]           # execute the plan (approval gate first)
 ai-sdlc continue                   # resume from current state
 ai-sdlc status                     # show task states
 ai-sdlc report                     # audit log + metrics -> markdown
+ai-sdlc rollback <task-id> [--yes] # revert one task's commit
+ai-sdlc replan [req] [--proposal file] [--yes]  # absorb a requirement change
+ai-sdlc push [--yes]               # push the feature branch to origin
 ```
 
 ## Architecture Overview
@@ -75,7 +190,7 @@ flowchart TB
 
     subgraph CORE[Orchestrator Core]
         DAG[Dependency Graph<br/>entry/exit gates]
-        GOV[Governance<br/>approvals, retries,<br/>fallback, rollback, safe-stop]
+        GOV[Governance<br/>approvals, retries, fallback,<br/>rollback, replan, safe-stop]
         OBS[Audit Log and<br/>Reliability Metrics]
     end
 
@@ -109,38 +224,37 @@ flowchart TB
     ADAPTERS --> OUT
 ```
 
-Every persona agent reads its context from the Knowledge Base, Project Profile, and Implementation Plan, executes through an adapter, and writes results and status back to the Plan. The orchestrator core decides which agents run, in what order, and enforces gates and approvals in between.
-
 ## Governance and Controlled Autonomy
 
 Agents execute under defined autonomy boundaries; humans stay in control:
 
 - Explicit dependency graph (cycle-checked) with entry/exit gates between stages
-- Human approval checkpoints (CLI: approve / reject / modify) for the plan and deploy-readiness; approvals persist across runs; non-interactive sessions never auto-approve
+- Human approval checkpoints (approve / reject / modify) for plan acceptance, deploy-readiness, rollback, replan, and push; plan approvals persist; non-interactive sessions never auto-approve
 - Bounded retries with the failure context fed back into the next attempt
 - Adapter fallback chain: if the primary AI tool fails, the next one takes over (audited)
-- Per-task git commits in the target workspace with one-command rollback (git revert), never pushed
+- Change detection: the framework diffs the workspace around every task, so policy checks run on what actually changed - secrets, out-of-workspace writes, oversized diffs block the task
+- Feature-branch lifecycle: agents work on a branch recorded in the plan; main stays clean; pushing is asked every time, never automatic
+- Per-task local commits ([ai-sdlc:Tn]) as rollback save-points; `ai-sdlc rollback` reverts exactly one task
+- Dynamic re-planning: requirement changed mid-flight -> diff the plan, protect completed work, revise pending tasks, re-approve; a stale-analysis gate refuses to execute a plan whose analysis changed after approval
 - Safe-stop: interrupt at any point; state on disk stays consistent and resumable
-- Policy guardrails on every task output: secret detection, no writes outside the workspace, diff size limits
-- Audit-grade observability: append-only JSONL log of every agent call, gate decision, approval, retry, fallback, and rollback
-- Reliability metrics from the log: success rate, retry/rollback frequency, MTTR, end-to-end latency
-- Parallel execution of independent tasks with the stage exit gate as the synchronization barrier
+- Audit-grade observability: append-only JSONL log of every agent call, gate decision, approval, retry, fallback, rollback, branch, and push
+- Reliability metrics: success rate, retry/rollback frequency, MTTR, end-to-end latency, and latency by stage
 
-## Development
+## Development (contributing to the framework)
 
 ```
-pip install -e .[dev]
-pytest                    # 50 tests, all offline (Mock adapter), ~2s
+py -m pip install -e .[dev]
+py -m pytest              # 81 tests, all offline (Mock adapter), ~10s
 ```
 
-Test coverage includes: plan parsing round-trips, DAG eligibility and cycle detection, gate logic, scripted adapter failures, retry exhaustion, fallback switching, policy violations, real git rollback, parallel overlap, safe-stop/resume, approval persistence, and a full pipeline integration run.
+Test coverage includes: plan parsing round-trips, plan metadata, DAG eligibility and cycle detection, gate logic, scripted adapter failures, retry exhaustion, fallback switching, change detection, policy violations, real git commit/rollback/branch/push (against a local bare remote), parallel overlap, safe-stop/resume, approval persistence, replan merge rules, stale-analysis gate, and a full pipeline integration run.
 
 ## Demos (next phase)
 
 1. **Greenfield** - build a URL shortener service from a requirement
 2. **Brownfield** - fix a bug in the generated codebase (impact analysis from the knowledge base)
-3. **Ambiguous** - "links should expire": surface ambiguities, record clarifications, re-plan, implement
+3. **Ambiguous** - "links should expire": surface ambiguities, record clarifications, replan, implement
 
 ## Status
 
-Core framework complete and tested. Demo scenarios and full documentation in progress.
+Core framework complete and hardened (change detection, rollback, replan, branch lifecycle, per-stage metrics). Demo scenarios and full documentation in progress.
