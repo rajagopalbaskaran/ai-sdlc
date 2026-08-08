@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
+import uuid
 from pathlib import Path
 
 import yaml
 
 from ai_sdlc.adapters.base import build_adapter
+from ai_sdlc.governance.approvals import request_approval
 from ai_sdlc.governance.fallback import FallbackChain
+from ai_sdlc.governance.rollback import rollback_task
+from ai_sdlc.observability.audit import AuditLog
 from ai_sdlc.observability.metrics import compute_metrics
 from ai_sdlc.observability.report import render_report
 from ai_sdlc.orchestrator.engine import Engine
@@ -137,6 +142,36 @@ def cmd_status(args) -> int:
     return 0
 
 
+def cmd_rollback(args) -> int:
+    ws = _require_workspace(args.workspace)
+    doc = PlanDocument.load(ws.plan_path)
+    try:
+        task = doc.get(args.task_id)
+    except KeyError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    audit = AuditLog(ws.runs_dir, time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
+    if args.yes:
+        decision = "approve"
+    else:
+        decision = request_approval(
+            f"Roll back task {task.id} ({task.title})? This reverts its commit"
+        )
+    audit.event("approval", gate=f"rollback:{task.id}", decision=decision)
+    if decision != "approve":
+        print("rollback not approved; nothing changed")
+        return 1
+    if not rollback_task(ws.root, task.id):
+        audit.event("rollback", task=task.id, ok=False, error="no [ai-sdlc] commit found or revert failed")
+        print(f"error: could not revert task {task.id} (no marked commit found, or revert conflict)", file=sys.stderr)
+        return 1
+    doc.set_status(task.id, "rolled_back")
+    doc.save()
+    audit.event("rollback", task=task.id, ok=True)
+    print(f"task {task.id} rolled back (git revert) and marked rolled_back")
+    return 0
+
+
 def cmd_report(args) -> int:
     ws = _require_workspace(args.workspace)
     logs = sorted(ws.runs_dir.glob("audit-*.jsonl"))
@@ -186,6 +221,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("status", parents=[common], help="show task states")
     sub.add_parser("report", parents=[common], help="render audit log and metrics to markdown")
+
+    p_rollback = sub.add_parser("rollback", parents=[common], help="revert one task's commit and mark it rolled_back")
+    p_rollback.add_argument("task_id", help="task id to roll back (e.g. T3)")
+    p_rollback.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     return parser
 
 
@@ -199,6 +238,7 @@ def main(argv: list[str] | None = None) -> int:
         "continue": cmd_run,
         "status": cmd_status,
         "report": cmd_report,
+        "rollback": cmd_rollback,
     }
     return handlers[args.command](args)
 
