@@ -18,6 +18,7 @@ from ai_sdlc.observability.audit import AuditLog
 from ai_sdlc.observability.metrics import compute_metrics
 from ai_sdlc.observability.report import render_report
 from ai_sdlc.orchestrator.engine import Engine
+from ai_sdlc.orchestrator.replan import extract_header, merge, render_plan
 from ai_sdlc.state.plan import PlanDocument, Task
 from ai_sdlc.workspace import Workspace
 
@@ -126,6 +127,8 @@ def cmd_run(args) -> int:
         f"(completed={summary.completed} blocked={summary.blocked} rolled_back={summary.rolled_back})"
     )
     print(f"audit: {engine.audit.path}")
+    if summary.blocked:
+        print("hint: blocked tasks may mean the plan itself is stale - consider: ai-sdlc replan")
     return 0 if summary.status == "completed" else 1
 
 
@@ -139,6 +142,94 @@ def cmd_status(args) -> int:
     for task in doc.tasks:
         deps = ",".join(task.depends_on) or "-"
         print(f"{task.id:<{width}}  {task.status:<16}  persona={task.persona:<24} deps={deps}  {task.title}")
+    return 0
+
+
+def cmd_replan(args) -> int:
+    ws = _require_workspace(args.workspace)
+    config = _load_config(ws)
+    doc = PlanDocument.load(ws.plan_path)
+    current_text = ws.plan_path.read_text(encoding="utf-8")
+    audit = AuditLog(ws.runs_dir, time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
+    audit.event("replan_started", requirement=args.requirement, proposal=args.proposal)
+
+    # 1) optionally refresh the analysis from a changed requirement
+    if args.requirement:
+        engine = Engine(ws, _build_engine_adapter(ws, config), config, audit=audit)
+        task = Task(
+            id="REANALYZE",
+            title="Re-analysis after requirement change",
+            status="pending",
+            persona="requirement_analyst",
+            body=Path(args.requirement).read_text(encoding="utf-8"),
+        )
+        result = engine.adapter.execute("requirement_analyst", engine._context_for(task), task)
+        if not result.ok:
+            print(f"re-analysis failed: {result.error}", file=sys.stderr)
+            return 1
+        ws.analysis_path.write_text(result.output, encoding="utf-8")
+        audit.event("task_completed", task="REANALYZE", artifact=str(ws.analysis_path))
+
+    # 2) obtain the proposed revised task set
+    if args.proposal:
+        proposal_text = Path(args.proposal).read_text(encoding="utf-8")
+    else:
+        engine = Engine(ws, _build_engine_adapter(ws, config), config, audit=audit)
+        analysis = (
+            ws.analysis_path.read_text(encoding="utf-8") if ws.analysis_path.is_file() else ""
+        )
+        task = Task(
+            id="REPLAN",
+            title="Revise the implementation plan",
+            status="pending",
+            persona="implementation_planner",
+            body=(
+                "The requirement/analysis changed while the plan below is mid-execution.\n"
+                "Propose the full revised task set (yaml blocks). Completed tasks are protected.\n\n"
+                f"## Current analysis\n\n{analysis}\n\n## Current plan\n\n{current_text}"
+            ),
+        )
+        result = engine.adapter.execute("implementation_planner", engine._context_for(task), task)
+        if not result.ok:
+            print(f"re-planning failed: {result.error}", file=sys.stderr)
+            return 1
+        proposal_text = result.output
+
+    proposed = PlanDocument(ws.plan_path, proposal_text).tasks
+    diff = merge(doc.tasks, proposed)
+    print(diff.summary())
+    audit.event(
+        "decision",
+        kind="replan_diff",
+        keep=diff.keep,
+        unchanged=diff.unchanged,
+        revised=diff.revised,
+        dropped=diff.dropped,
+        added=diff.added,
+    )
+
+    # 3) governed application: the human approves the diff
+    decision = "approve" if args.yes else request_approval("Apply the revised plan?")
+    audit.event("approval", gate="replan", decision=decision)
+    if decision != "approve":
+        print("replan not approved; plan unchanged")
+        return 1
+
+    ws.plan_path.write_text(render_plan(extract_header(current_text), diff.merged), encoding="utf-8")
+
+    # revised plan = re-approved plan, pinned to the current analysis
+    approvals_path = ws.state_dir / "approvals.yaml"
+    approvals = {}
+    if approvals_path.is_file():
+        approvals = yaml.safe_load(approvals_path.read_text(encoding="utf-8")) or {}
+    approvals["plan"] = True
+    sha = ws.analysis_sha()
+    if sha:
+        approvals["analysis_sha"] = sha
+    approvals_path.write_text(yaml.safe_dump(approvals), encoding="utf-8")
+
+    audit.event("replan_applied", tasks=len(diff.merged))
+    print(f"revised plan written to {ws.plan_path}; continue with: ai-sdlc run")
     return 0
 
 
@@ -225,6 +316,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p_rollback = sub.add_parser("rollback", parents=[common], help="revert one task's commit and mark it rolled_back")
     p_rollback.add_argument("task_id", help="task id to roll back (e.g. T3)")
     p_rollback.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+
+    p_replan = sub.add_parser(
+        "replan", parents=[common], help="absorb a requirement change: diff, revise pending tasks, re-approve"
+    )
+    p_replan.add_argument("requirement", nargs="?", default=None, help="changed requirement file (re-runs analysis)")
+    p_replan.add_argument("--proposal", default=None, help="use a prepared proposal file instead of the planner agent")
+    p_replan.add_argument("--yes", action="store_true", help="skip the diff approval prompt")
     return parser
 
 
@@ -239,6 +337,7 @@ def main(argv: list[str] | None = None) -> int:
         "status": cmd_status,
         "report": cmd_report,
         "rollback": cmd_rollback,
+        "replan": cmd_replan,
     }
     return handlers[args.command](args)
 

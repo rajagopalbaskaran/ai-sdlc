@@ -142,6 +142,33 @@ def test_safe_stop_and_resume(tmp_workspace):
     assert summary2.completed == 3
 
 
+def test_stale_analysis_halts_run(tmp_workspace):
+    ws = seed(tmp_workspace)
+    analysis = ws.state_dir / "plan" / "requirement-analysis.md"
+    analysis.write_text("original analysis", encoding="utf-8")
+    (ws.state_dir / "approvals.yaml").write_text(
+        f"plan: true\nanalysis_sha: {ws.analysis_sha()}\n", encoding="utf-8"
+    )
+    # analysis changes after the plan was approved
+    analysis.write_text("CHANGED analysis", encoding="utf-8")
+    engine = Engine(ws, MockAdapter(), config={}, input_fn=approve_all)
+    summary = engine.run(parallel=False)
+    assert summary.status == "halted"
+    assert summary.completed == 0
+    assert "stale" in engine.audit.path.read_text(encoding="utf-8")
+
+
+def test_plan_approval_records_analysis_sha(tmp_workspace):
+    ws = seed(tmp_workspace, approve_plan=False)
+    analysis = ws.state_dir / "plan" / "requirement-analysis.md"
+    analysis.write_text("the analysis", encoding="utf-8")
+    engine = Engine(ws, MockAdapter(), config={}, input_fn=approve_all)
+    assert engine.run(parallel=False).status == "completed"
+    approvals = (ws.state_dir / "approvals.yaml").read_text(encoding="utf-8")
+    assert "analysis_sha" in approvals
+    assert ws.analysis_sha() in approvals
+
+
 def test_plan_approval_gate_blocks_rejection(tmp_workspace):
     ws = seed(tmp_workspace, approve_plan=False)
     engine = Engine(ws, MockAdapter(), config={}, input_fn=lambda _: "r")

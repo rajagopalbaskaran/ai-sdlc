@@ -80,6 +80,12 @@ class Engine:
         self.audit.event("approval", gate=gate, decision=decision)
         if decision == "approve":
             approvals[gate] = True
+            if gate == "plan":
+                # fingerprint the analysis this plan approval was based on,
+                # so a later analysis change is detected as staleness
+                sha = self.ws.analysis_sha()
+                if sha:
+                    approvals["analysis_sha"] = sha
             self._save_approvals(approvals)
             return True
         return False
@@ -181,6 +187,17 @@ class Engine:
 
         approvals = self._load_approvals()
         self.audit.event("run_started", parallel=parallel)
+
+        # stale-analysis gate: upstream output changed after plan approval ->
+        # refuse to execute a plan derived from an outdated analysis
+        stored_sha = approvals.get("analysis_sha")
+        current_sha = self.ws.analysis_sha()
+        if approvals.get("plan") and stored_sha and current_sha and stored_sha != current_sha:
+            reason = "stale analysis: requirement-analysis.md changed since plan approval - run: ai-sdlc replan"
+            self.audit.event("gate", stage="develop", kind="entry", passed=False, reasons=[reason])
+            self.audit.event("run_stopped", reason="stale analysis")
+            print(reason)
+            return self._summary(doc, "halted")
 
         gate = entry_gate("develop", GateContext(tasks=doc.tasks, approvals=approvals))
         if not gate.passed and any("approved" in r for r in gate.reasons):

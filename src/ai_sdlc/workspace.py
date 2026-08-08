@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 from importlib import resources
 from pathlib import Path
@@ -27,6 +28,17 @@ class Workspace:
     @property
     def runs_dir(self) -> Path:
         return self.state_dir / "runs"
+
+    @property
+    def analysis_path(self) -> Path:
+        return self.state_dir / "plan" / "requirement-analysis.md"
+
+    def analysis_sha(self) -> str | None:
+        """Fingerprint of the requirement analysis; None when absent. Used
+        to detect that upstream outputs changed after plan approval."""
+        if not self.analysis_path.is_file():
+            return None
+        return hashlib.sha256(self.analysis_path.read_bytes()).hexdigest()
 
     @classmethod
     def init(cls, root: Path) -> "Workspace":
