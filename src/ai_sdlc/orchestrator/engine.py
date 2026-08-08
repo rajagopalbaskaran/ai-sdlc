@@ -22,6 +22,7 @@ import yaml
 from ai_sdlc.adapters.base import Adapter
 from ai_sdlc.changes import diff, snapshot
 from ai_sdlc.governance.approvals import request_approval
+from ai_sdlc.governance.branching import checkout_branch, has_remote, push_branch
 from ai_sdlc.governance.policy import check_policies
 from ai_sdlc.governance.retry import RetryPolicy
 from ai_sdlc.governance.rollback import commit_task
@@ -210,6 +211,22 @@ class Engine:
             self.audit.event("run_stopped", reason="entry gate failed")
             return self._summary(doc, "halted")
 
+        # feature-branch lifecycle: agents work on a branch recorded in the
+        # plan; main stays clean. No-op when the workspace has no git repo.
+        branch: str | None = None
+        if (self.ws.root / ".git").is_dir():
+            branch = (
+                doc.meta.get("branch")
+                or self.config.get("branch")
+                or f"feature/{self.ws.root.name}"
+            )
+            if doc.meta.get("branch") != branch:
+                with self._lock:
+                    doc.set_meta(branch=branch)
+                    doc.save()
+            switched = checkout_branch(self.ws.root, branch)
+            self.audit.event("branch", name=branch, ok=switched)
+
         try:
             while not terminal(doc.tasks):
                 batch = eligible_tasks(doc.tasks)
@@ -240,6 +257,16 @@ class Engine:
             self._ensure_approval(
                 "deploy_ready", "Mark this workspace deploy-ready?", approvals
             )
+        # push gate: publishing is high-impact -> asked EVERY time, never
+        # persisted, never automatic
+        if exit_result.passed and branch and has_remote(self.ws.root):
+            decision = request_approval(
+                f"Push branch {branch} to origin?", input_fn=self.input_fn
+            )
+            self.audit.event("approval", gate="push", decision=decision)
+            if decision == "approve":
+                pushed, detail = push_branch(self.ws.root, branch)
+                self.audit.event("push", branch=branch, ok=pushed, detail=detail)
         self.audit.event("run_completed")
         return self._summary(doc, "completed" if exit_result.passed else "halted")
 

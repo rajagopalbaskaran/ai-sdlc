@@ -95,3 +95,55 @@ def test_unknown_task_rejected(plan_file):
 def test_sections_without_yaml_ignored(plan_file):
     doc = PlanDocument.load(plan_file)
     assert len(doc.tasks) == 3
+
+
+SAMPLE_WITH_META = """# Implementation Plan
+
+```yaml
+branch: feature/demo
+```
+
+Intro prose.
+
+### Task 1: One
+
+```yaml
+id: T1
+status: pending
+depends_on: []
+persona: developer
+```
+
+Body one.
+"""
+
+
+def test_meta_block_parsed(tmp_path):
+    p = tmp_path / "plan.md"
+    p.write_text(SAMPLE_WITH_META, encoding="utf-8")
+    doc = PlanDocument.load(p)
+    assert doc.meta == {"branch": "feature/demo"}
+    assert len(doc.tasks) == 1
+
+
+def test_set_meta_updates_existing_block(tmp_path):
+    p = tmp_path / "plan.md"
+    p.write_text(SAMPLE_WITH_META, encoding="utf-8")
+    doc = PlanDocument.load(p)
+    doc.set_meta(branch="feature/other")
+    doc.save()
+    reloaded = PlanDocument.load(p)
+    assert reloaded.meta == {"branch": "feature/other"}
+    assert "Intro prose." in p.read_text(encoding="utf-8")
+    assert reloaded.get("T1").status == "pending"
+
+
+def test_set_meta_inserts_block_when_absent(plan_file):
+    doc = PlanDocument.load(plan_file)
+    assert doc.meta == {}
+    doc.set_meta(branch="feature/new")
+    doc.save()
+    reloaded = PlanDocument.load(plan_file)
+    assert reloaded.meta == {"branch": "feature/new"}
+    assert [t.id for t in reloaded.tasks] == ["T1", "T2", "T3"]
+    assert "Some intro prose that must be preserved." in plan_file.read_text(encoding="utf-8")

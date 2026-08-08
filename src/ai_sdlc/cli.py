@@ -12,6 +12,7 @@ import yaml
 
 from ai_sdlc.adapters.base import build_adapter
 from ai_sdlc.governance.approvals import request_approval
+from ai_sdlc.governance.branching import current_branch, push_branch
 from ai_sdlc.governance.fallback import FallbackChain
 from ai_sdlc.governance.rollback import rollback_task
 from ai_sdlc.observability.audit import AuditLog
@@ -233,6 +234,28 @@ def cmd_replan(args) -> int:
     return 0
 
 
+def cmd_push(args) -> int:
+    ws = _require_workspace(args.workspace)
+    doc = PlanDocument.load(ws.plan_path)
+    branch = doc.meta.get("branch") or current_branch(ws.root)
+    if not branch:
+        print("error: no branch recorded in the plan and none checked out", file=sys.stderr)
+        return 1
+    audit = AuditLog(ws.runs_dir, time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
+    decision = "approve" if args.yes else request_approval(f"Push branch {branch} to origin?")
+    audit.event("approval", gate="push", decision=decision)
+    if decision != "approve":
+        print("push not approved; nothing sent")
+        return 1
+    pushed, detail = push_branch(ws.root, branch)
+    audit.event("push", branch=branch, ok=pushed, detail=detail)
+    if not pushed:
+        print(f"push failed: {detail}", file=sys.stderr)
+        return 1
+    print(f"pushed {branch} to origin")
+    return 0
+
+
 def cmd_rollback(args) -> int:
     ws = _require_workspace(args.workspace)
     doc = PlanDocument.load(ws.plan_path)
@@ -323,6 +346,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_replan.add_argument("requirement", nargs="?", default=None, help="changed requirement file (re-runs analysis)")
     p_replan.add_argument("--proposal", default=None, help="use a prepared proposal file instead of the planner agent")
     p_replan.add_argument("--yes", action="store_true", help="skip the diff approval prompt")
+
+    p_push = sub.add_parser("push", parents=[common], help="push the plan's feature branch to origin (human-gated)")
+    p_push.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     return parser
 
 
@@ -338,6 +364,7 @@ def main(argv: list[str] | None = None) -> int:
         "report": cmd_report,
         "rollback": cmd_rollback,
         "replan": cmd_replan,
+        "push": cmd_push,
     }
     return handlers[args.command](args)
 

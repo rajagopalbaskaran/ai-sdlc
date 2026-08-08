@@ -142,6 +142,67 @@ def test_safe_stop_and_resume(tmp_workspace):
     assert summary2.completed == 3
 
 
+def test_run_works_on_feature_branch_and_records_it(tmp_workspace):
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    _make_git_repo(tmp_workspace)
+    engine = Engine(
+        ws, WritingAdapter(tmp_workspace), config={"commit_mode": "auto"}, input_fn=approve_all
+    )
+    assert engine.run(parallel=False).status == "completed"
+    # branch recorded in the plan (execution state)
+    doc = PlanDocument.load(ws.plan_path)
+    assert doc.meta.get("branch") == "feature/demo-app"
+    # commits landed on the feature branch, main stays clean
+    feature_log = _git(tmp_workspace, "log", "--format=%s", "feature/demo-app").stdout
+    main_log = _git(tmp_workspace, "log", "--format=%s", "main").stdout
+    assert "[ai-sdlc:T1]" in feature_log
+    assert "[ai-sdlc:T1]" not in main_log
+
+
+def test_push_gate_approved_pushes_to_remote(tmp_workspace, tmp_path):
+    import subprocess
+
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    _make_git_repo(tmp_workspace)
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    _git(tmp_workspace, "remote", "add", "origin", str(bare))
+    engine = Engine(
+        ws, WritingAdapter(tmp_workspace), config={"commit_mode": "auto"}, input_fn=approve_all
+    )
+    assert engine.run(parallel=False).status == "completed"
+    listed = subprocess.run(
+        ["git", "--git-dir", str(bare), "branch", "--list"],
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "feature/demo-app" in listed
+    assert '"push"' in engine.audit.path.read_text(encoding="utf-8")
+
+
+def test_push_gate_rejected_never_pushes(tmp_workspace, tmp_path):
+    import subprocess
+
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    _make_git_repo(tmp_workspace)
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    _git(tmp_workspace, "remote", "add", "origin", str(bare))
+    engine = Engine(
+        ws,
+        WritingAdapter(tmp_workspace),
+        config={"commit_mode": "off"},
+        input_fn=lambda _: "r",  # plan pre-approved; push prompt rejected
+    )
+    assert engine.run(parallel=False).status == "completed"
+    listed = subprocess.run(
+        ["git", "--git-dir", str(bare), "branch", "--list"],
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "feature/demo-app" not in listed
+
+
 def test_stale_analysis_halts_run(tmp_workspace):
     ws = seed(tmp_workspace)
     analysis = ws.state_dir / "plan" / "requirement-analysis.md"
@@ -213,7 +274,7 @@ def _git(cwd, *args):
 
 
 def _make_git_repo(root):
-    _git(root, "init", "-q")
+    _git(root, "init", "-q", "-b", "main")
     _git(root, "config", "user.name", "test")
     _git(root, "config", "user.email", "t@t.local")
     (root / "base.txt").write_text("base\n", encoding="utf-8")
