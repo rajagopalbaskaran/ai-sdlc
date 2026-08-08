@@ -10,7 +10,13 @@ and normalize it into a clear engineering problem.
 - Project profile (.ai-sdlc/project-profile.md)
 
 ## Outputs
-Write .ai-sdlc/plan/requirement-analysis.md containing:
+Return, as your final response, the COMPLETE markdown content of the
+requirement analysis document. The framework saves your response to
+.ai-sdlc/plan/requirement-analysis.md - do NOT create or write any files
+yourself, and do not ask for file permissions. Your response text IS the
+deliverable.
+
+The document must contain:
 - Functional analysis
 - Technical analysis
 - Impact analysis (modules, APIs, data flows affected)
@@ -22,3 +28,4 @@ Write .ai-sdlc/plan/requirement-analysis.md containing:
 - Reason ONLY from the provided context; never invent project facts.
 - Every ambiguity must be either asked as a question or recorded as an assumption.
 - Do not write code. Do not modify the implementation plan.
+- Respond with the document markdown only - no preamble, no commentary.

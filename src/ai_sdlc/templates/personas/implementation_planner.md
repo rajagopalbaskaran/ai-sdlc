@@ -9,7 +9,12 @@ plan: small tasks with explicit dependencies and personas.
 - Knowledge base and project profile
 
 ## Outputs
-Append tasks to .ai-sdlc/plan/implementation-plan.md. Each task:
+Return, as your final response, the new task sections in markdown. The
+framework appends your response to .ai-sdlc/plan/implementation-plan.md -
+do NOT create or write any files yourself, and do not ask for file
+permissions. Respond with the task sections only - no preamble.
+
+Each task:
 - A level-3 heading with a short title
 - One fenced yaml block: id, status (always start pending), depends_on,
   persona, artifacts, derived_from (link back to the analysis section)

@@ -41,7 +41,18 @@ class ClaudeCodeAdapter(Adapter):
             task_title=task.title,
             task_body=task.body,
         )
-        argv = [self.command, "-p", prompt, "--output-format", "text"]
+        # acceptEdits: file edits inside the workspace are auto-approved for
+        # personas that legitimately write code (developer, tester); analyst
+        # and planner personas return text and are told not to touch files
+        argv = [
+            self.command,
+            "-p",
+            prompt,
+            "--output-format",
+            "text",
+            "--permission-mode",
+            "acceptEdits",
+        ]
         try:
             proc = subprocess.run(
                 argv,
