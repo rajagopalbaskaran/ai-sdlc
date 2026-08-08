@@ -72,6 +72,7 @@ def cmd_analyze(args) -> int:
         persona="requirement_analyst",
         body=requirement,
     )
+    engine.audit.event("stage_started", stage="analyze")
     engine.audit.event("task_started", task="ANALYZE", persona="requirement_analyst")
     result = engine.adapter.execute("requirement_analyst", engine._context_for(task), task)
     if not result.ok:
@@ -81,6 +82,7 @@ def cmd_analyze(args) -> int:
     out = ws.state_dir / "plan" / "requirement-analysis.md"
     out.write_text(result.output, encoding="utf-8")
     engine.audit.event("task_completed", task="ANALYZE", artifact=str(out))
+    engine.audit.event("stage_completed", stage="analyze")
     print(f"analysis written to {out}")
     return 0
 
@@ -100,6 +102,7 @@ def cmd_plan(args) -> int:
         persona="implementation_planner",
         body=analysis_path.read_text(encoding="utf-8"),
     )
+    engine.audit.event("stage_started", stage="plan")
     engine.audit.event("task_started", task="PLAN", persona="implementation_planner")
     result = engine.adapter.execute("implementation_planner", engine._context_for(task), task)
     if not result.ok:
@@ -113,6 +116,7 @@ def cmd_plan(args) -> int:
     else:
         print("planner produced no task blocks; plan file unchanged (see audit log)")
     engine.audit.event("task_completed", task="PLAN")
+    engine.audit.event("stage_completed", stage="plan")
     print("review the plan, then run: ai-sdlc run (plan approval will be requested)")
     return 0
 

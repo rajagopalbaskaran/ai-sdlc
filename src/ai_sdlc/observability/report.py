@@ -21,10 +21,14 @@ def render_report(jsonl_path: Path) -> str:
         f"- Rollbacks: {metrics['rollbacks']}",
         f"- MTTR: {metrics['mttr_seconds']:.1f}s",
         f"- End-to-end: {metrics['e2e_seconds']:.1f}s",
-        "",
-        "## Timeline",
-        "",
     ]
+    if metrics["per_stage_seconds"]:
+        lines += ["", "## Latency by stage", ""]
+        lines += [
+            f"- {stage}: {seconds:.1f}s"
+            for stage, seconds in metrics["per_stage_seconds"].items()
+        ]
+    lines += ["", "## Timeline", ""]
     for line in Path(jsonl_path).read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:

@@ -227,6 +227,7 @@ class Engine:
             switched = checkout_branch(self.ws.root, branch)
             self.audit.event("branch", name=branch, ok=switched)
 
+        self.audit.event("stage_started", stage="develop")
         try:
             while not terminal(doc.tasks):
                 batch = eligible_tasks(doc.tasks)
@@ -245,6 +246,7 @@ class Engine:
             self.audit.event("run_stopped", reason="safe-stop (interrupt)")
             return self._summary(doc, "stopped")
 
+        self.audit.event("stage_completed", stage="develop")
         exit_result = exit_gate("develop", GateContext(tasks=doc.tasks, approvals=approvals))
         self.audit.event(
             "gate",

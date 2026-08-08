@@ -37,6 +37,15 @@ def compute_metrics(jsonl_path: Path) -> dict:
         None,
     )
 
+    # per-stage latency: first stage_started to last stage_completed per stage
+    stage_start: dict[str, float] = {}
+    per_stage: dict[str, float] = {}
+    for event in events:
+        if event["type"] == "stage_started":
+            stage_start.setdefault(event["stage"], event["ts"])
+        elif event["type"] == "stage_completed" and event.get("stage") in stage_start:
+            per_stage[event["stage"]] = event["ts"] - stage_start[event["stage"]]
+
     return {
         "tasks_started": len(started),
         "tasks_completed": len(completed),
@@ -45,4 +54,5 @@ def compute_metrics(jsonl_path: Path) -> dict:
         "rollbacks": rollbacks,
         "mttr_seconds": (sum(recovery_times) / len(recovery_times)) if recovery_times else 0.0,
         "e2e_seconds": (run_end - run_start) if run_start is not None and run_end is not None else 0.0,
+        "per_stage_seconds": per_stage,
     }
