@@ -64,7 +64,8 @@ def cmd_analyze(args) -> int:
     ws = _require_workspace(args.workspace)
     config = _load_config(ws)
     requirement = Path(args.requirement).read_text(encoding="utf-8")
-    engine = Engine(ws, _build_engine_adapter(ws, config), config)
+    engine = Engine(ws, _build_engine_adapter(ws, config), config, echo=True)
+    print(f"analyzing requirement via {config.get('adapter', 'mock')} (may take a few minutes; Ctrl+C is safe)...")
     task = Task(
         id="ANALYZE",
         title="Requirement analysis",
@@ -94,7 +95,8 @@ def cmd_plan(args) -> int:
     if not analysis_path.is_file():
         print("error: no requirement-analysis.md; run: ai-sdlc analyze first", file=sys.stderr)
         return 1
-    engine = Engine(ws, _build_engine_adapter(ws, config), config)
+    engine = Engine(ws, _build_engine_adapter(ws, config), config, echo=True)
+    print(f"planning via {config.get('adapter', 'mock')} (may take a few minutes; Ctrl+C is safe)...")
     task = Task(
         id="PLAN",
         title="Implementation planning",
@@ -124,7 +126,7 @@ def cmd_plan(args) -> int:
 def cmd_run(args) -> int:
     ws = _require_workspace(args.workspace)
     config = _load_config(ws)
-    engine = Engine(ws, _build_engine_adapter(ws, config), config)
+    engine = Engine(ws, _build_engine_adapter(ws, config), config, echo=True)
     parallel = True if args.parallel else None
     summary = engine.run(parallel=parallel)
     print(

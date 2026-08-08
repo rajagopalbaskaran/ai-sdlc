@@ -18,6 +18,23 @@ def test_events_append_as_jsonl(tmp_path):
     assert events[1]["task"] == "T1"
 
 
+def test_echo_prints_simple_lines(tmp_path, capsys):
+    log = AuditLog(tmp_path, "r1", echo=True)
+    log.event("task_started", task="T1", persona="developer", title="Build schema")
+    log.event("task_completed", task="T1", files_changed=2, seconds=15)
+    log.event("gate", stage="develop", kind="entry", passed=True)  # silent
+    out = capsys.readouterr().out
+    assert "T1 started - Build schema (developer)" in out
+    assert "T1 completed (2 files, 15s)" in out
+    assert "gate" not in out
+
+
+def test_no_echo_by_default(tmp_path, capsys):
+    log = AuditLog(tmp_path, "r1")
+    log.event("task_started", task="T1")
+    assert capsys.readouterr().out == ""
+
+
 def test_log_is_append_only(tmp_path):
     log = AuditLog(tmp_path, "run1")
     log.event("run_started")

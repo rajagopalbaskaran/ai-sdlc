@@ -51,12 +51,13 @@ class Engine:
         config: dict | None = None,
         audit: AuditLog | None = None,
         input_fn: Callable[[str], str] = input,
+        echo: bool = False,
     ):
         self.ws = workspace
         self.adapter = adapter
         self.config = config or {}
         self.run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
-        self.audit = audit or AuditLog(workspace.runs_dir, self.run_id)
+        self.audit = audit or AuditLog(workspace.runs_dir, self.run_id, echo=echo)
         self.input_fn = input_fn
         self._lock = threading.Lock()
 
@@ -114,7 +115,8 @@ class Engine:
 
     def _execute_task(self, doc: PlanDocument, task: Task) -> None:
         self._set_status(doc, task.id, "in_progress")
-        self.audit.event("task_started", task=task.id, persona=task.persona)
+        self.audit.event("task_started", task=task.id, persona=task.persona, title=task.title)
+        started_at = time.time()
         context = self._context_for(task)
         retry = RetryPolicy(self.config.get("retry_budget", 2))
         before = snapshot(self.ws.root)
@@ -129,8 +131,11 @@ class Engine:
             task, attempt, on_retry=lambda **kw: self.audit.event("retry", **kw)
         )
 
+        elapsed = round(time.time() - started_at)
         if not result.ok:
-            self.audit.event("task_failed", task=task.id, error=result.error or "unknown")
+            self.audit.event(
+                "task_failed", task=task.id, error=result.error or "unknown", seconds=elapsed
+            )
             self._set_status(doc, task.id, "blocked")
             return
 
@@ -142,13 +147,15 @@ class Engine:
         )
         if violations:
             self.audit.event(
-                "task_failed", task=task.id, error="policy: " + "; ".join(violations)
+                "task_failed", task=task.id, error="policy: " + "; ".join(violations), seconds=elapsed
             )
             self._set_status(doc, task.id, "blocked")
             return
 
         self._set_status(doc, task.id, "completed")
-        self.audit.event("task_completed", task=task.id, files_changed=len(files_changed))
+        self.audit.event(
+            "task_completed", task=task.id, files_changed=len(files_changed), seconds=elapsed
+        )
         self._maybe_commit(task, files_changed)
 
     def _maybe_commit(self, task: Task, files_changed: list[str]) -> None:
