@@ -50,6 +50,8 @@ The framework follows **spec-driven development**: specifications (requirement a
 Notes:
 - **Mock-only usage needs none of the Claude/Node rows.** The framework, its tests, and offline demos run fully without an LLM.
 - Install Claude Code: `npm install -g @anthropic-ai/claude-code` (or the native installer from Anthropic docs), then run `claude` once to authenticate.
+- **A GitHub (or any git remote) account is optional** - only needed when you approve a push; everything else is local.
+- **Your target project's own toolchain is a separate prerequisite** - the framework orchestrates, but building and verifying what the agents produce needs that stack's tools on your machine (e.g., JDK 17 + Maven for a Spring Boot project, Node for a React frontend, Python for a FastAPI service). Python dependencies of the framework itself (pyyaml, pytest) are installed automatically by pip.
 
 ## Getting Started - step by step
 
