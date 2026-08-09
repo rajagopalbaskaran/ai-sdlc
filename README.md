@@ -249,6 +249,13 @@ py -m pytest              # 81 tests, all offline (Mock adapter), ~10s
 
 Test coverage includes: plan parsing round-trips, plan metadata, DAG eligibility and cycle detection, gate logic, scripted adapter failures, retry exhaustion, fallback switching, change detection, policy violations, real git commit/rollback/branch/push (against a local bare remote), parallel overlap, safe-stop/resume, approval persistence, replan merge rules, stale-analysis gate, and a full pipeline integration run.
 
+## Documentation
+
+- [docs/architecture.md](docs/architecture.md) - components, orchestration model, control flow, key decisions
+- [docs/design.md](docs/design.md) - the original design and requirement traceability
+- [docs/testing-and-limitations.md](docs/testing-and-limitations.md) - testing approach, limitations, trade-offs
+- [docs/plans/](docs/plans/) - the implementation plan the framework itself was built from
+
 ## Demos (next phase)
 
 1. **Greenfield** - build a URL shortener service from a requirement
