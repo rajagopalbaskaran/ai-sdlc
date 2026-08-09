@@ -101,6 +101,24 @@ def cmd_analyze(args) -> int:
     out.write_text(result.output, encoding="utf-8")
     engine.audit.event("task_completed", task="ANALYZE", artifact=str(out))
     engine.audit.event("stage_completed", stage="analyze")
+
+    # a new analysis invalidates any prior plan approval: the plan must be
+    # re-approved against the upstream it now derives from
+    approvals_path = ws.state_dir / "approvals.yaml"
+    if approvals_path.is_file():
+        approvals = yaml.safe_load(approvals_path.read_text(encoding="utf-8")) or {}
+        if approvals.get("plan"):
+            approvals["plan"] = False
+            approvals.pop("analysis_sha", None)
+            approvals_path.write_text(yaml.safe_dump(approvals), encoding="utf-8")
+            engine.audit.event(
+                "decision",
+                subject="plan_approval_revoked",
+                choice="re-approval required",
+                reasons=["a new requirement analysis replaced the one the plan was approved against"],
+            )
+            print("note: prior plan approval revoked - develop will ask for approval again")
+
     print(f"analysis written to {out}")
     return 0
 
