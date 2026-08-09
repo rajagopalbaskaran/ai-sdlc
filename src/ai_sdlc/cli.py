@@ -44,6 +44,27 @@ def _build_engine_adapter(ws: Workspace, config: dict, audit_event=None):
     return FallbackChain([primary, *fallbacks], on_fallback=audit_event)
 
 
+def _revoke_plan_approval(ws: Workspace, audit, reason: str) -> bool:
+    """The plan changed relative to what was approved - the approval must be
+    re-earned. Returns True when an active approval was actually revoked."""
+    approvals_path = ws.state_dir / "approvals.yaml"
+    if not approvals_path.is_file():
+        return False
+    approvals = yaml.safe_load(approvals_path.read_text(encoding="utf-8")) or {}
+    if not approvals.get("plan"):
+        return False
+    approvals["plan"] = False
+    approvals.pop("analysis_sha", None)
+    approvals_path.write_text(yaml.safe_dump(approvals), encoding="utf-8")
+    audit.event(
+        "decision",
+        subject="plan_approval_revoked",
+        choice="re-approval required",
+        reasons=[reason],
+    )
+    return True
+
+
 def _warn_unexpected_changes(ws: Workspace, audit, stage: str, before) -> None:
     """Text stages (analyze/plan/replan) must not modify the workspace.
     Any detected change is audited and surfaced - defense in depth on top of
@@ -104,34 +125,27 @@ def cmd_analyze(args) -> int:
 
     # a new analysis invalidates any prior plan approval: the plan must be
     # re-approved against the upstream it now derives from
-    approvals_path = ws.state_dir / "approvals.yaml"
-    if approvals_path.is_file():
-        approvals = yaml.safe_load(approvals_path.read_text(encoding="utf-8")) or {}
-        if approvals.get("plan"):
-            approvals["plan"] = False
-            approvals.pop("analysis_sha", None)
-            approvals_path.write_text(yaml.safe_dump(approvals), encoding="utf-8")
+    if _revoke_plan_approval(
+        ws,
+        engine.audit,
+        "a new requirement analysis replaced the one the plan was approved against",
+    ):
+        print("note: prior plan approval revoked - develop will ask for approval again")
+        # release the branch pin too: new requirement, new branch
+        doc = PlanDocument.load(ws.plan_path)
+        if doc.meta.get("branch"):
+            old_branch = doc.meta["branch"]
+            doc.set_meta(branch=None)
+            doc.save()
             engine.audit.event(
                 "decision",
-                subject="plan_approval_revoked",
-                choice="re-approval required",
-                reasons=["a new requirement analysis replaced the one the plan was approved against"],
+                subject="branch_unpinned",
+                choice=f"released {old_branch}",
+                reasons=["a new requirement gets its own branch"],
             )
-            print("note: prior plan approval revoked - develop will ask for approval again")
-            # release the branch pin too: new requirement, new branch
-            doc = PlanDocument.load(ws.plan_path)
-            if doc.meta.get("branch"):
-                old_branch = doc.meta["branch"]
-                doc.set_meta(branch=None)
-                doc.save()
-                engine.audit.event(
-                    "decision",
-                    subject="branch_unpinned",
-                    choice=f"released {old_branch}",
-                    reasons=["a new requirement gets its own branch"],
-                )
 
     print(f"analysis written to {out}")
+    print("next: review the analysis (answer/adjust ambiguities), then run: ai-sdlc plan")
     return 0
 
 
@@ -164,6 +178,11 @@ def cmd_plan(args) -> int:
         with ws.plan_path.open("a", encoding="utf-8") as handle:
             handle.write("\n" + result.output.strip() + "\n")
         print(f"tasks appended to {ws.plan_path}")
+        # new tasks were never approved: any prior approval no longer covers them
+        if _revoke_plan_approval(
+            ws, engine.audit, "new tasks were appended after the plan was approved"
+        ):
+            print("note: plan changed - re-approval will be requested at develop")
     else:
         print("planner produced no task blocks; plan file unchanged (see audit log)")
     engine.audit.event("task_completed", task="PLAN")
@@ -189,6 +208,11 @@ def cmd_run(args) -> int:
             print(f"  {task_id} - {reason or 'see audit log'}")
         print("fix the causes, then rerun: ai-sdlc develop (it will offer to retry them)")
         print("if the plan itself is wrong rather than the execution: ai-sdlc replan")
+    elif summary.status == "completed":
+        print(
+            "next: verify the outputs, then: ai-sdlc report / ai-sdlc summarize; "
+            "publish with: ai-sdlc push; new requirement? start with: ai-sdlc analyze <file>"
+        )
     return 0 if summary.status == "completed" else 1
 
 

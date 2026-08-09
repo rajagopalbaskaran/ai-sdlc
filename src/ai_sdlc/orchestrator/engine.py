@@ -60,6 +60,9 @@ def recommend_branch(ws: Workspace) -> tuple[str, str]:
     slug = re.sub(r"[^a-z0-9]+", "-", subject.lower()).strip("-")
     if len(slug) > 40:
         slug = slug[:40].rstrip("-")
+        # never cut mid-word: drop the trailing fragment
+        if "-" in slug:
+            slug = slug.rsplit("-", 1)[0]
     if not slug:
         return f"feature/{ws.root.name}", "default from workspace name"
     return f"{kind}/{slug}", "derived from the requirement analysis title"
@@ -110,6 +113,14 @@ class Engine:
             return True
         decision = request_approval(prompt, input_fn=self.input_fn)
         self.audit.event("approval", gate=gate, decision=decision)
+        if decision == "modify":
+            if gate == "plan":
+                print(
+                    "to modify: edit .ai-sdlc/plan/implementation-plan.md "
+                    "(prose and task bodies), then rerun: ai-sdlc develop"
+                )
+            else:
+                print(f"gate '{gate}' not approved; adjust, then rerun: ai-sdlc develop")
         if decision == "approve":
             approvals[gate] = True
             if gate == "plan":
@@ -320,6 +331,21 @@ class Engine:
         # blocked work never resumes silently: offer the human the decision
         # (or honor an explicit --retry-blocked)
         self._offer_blocked_retry(doc, retry_blocked)
+
+        # a run with no runnable work must say so, not vacuously succeed
+        # (and must not create branches or ask vacuous questions); blocked
+        # tasks are NOT "no work" - they surface via the halted path below
+        if not any(t.status in ("pending", "in_progress", "blocked") for t in doc.tasks):
+            print("nothing to execute: all tasks are already in a terminal state")
+            print("if you analyzed a new requirement, create its tasks first: ai-sdlc plan")
+            self.audit.event(
+                "decision",
+                subject="no_work",
+                choice="nothing to execute",
+                reasons=["no pending tasks in the plan"],
+            )
+            self.audit.event("run_completed")
+            return self._summary(doc, "completed")
 
         # feature-branch lifecycle: agents work on a branch recorded in the
         # plan; main stays clean. No-op when the workspace has no git repo.

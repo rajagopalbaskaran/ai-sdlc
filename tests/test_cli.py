@@ -125,6 +125,42 @@ def test_analyze_revokes_prior_plan_approval(tmp_workspace):
     assert not PlanDocument.load(plan_path).meta.get("branch")
 
 
+def test_analyze_prints_next_step(tmp_workspace, capsys):
+    _seed(tmp_workspace)
+    req = tmp_workspace / "req.md"
+    req.write_text("# Something\n\nDo it.\n", encoding="utf-8")
+    assert main(["analyze", str(req), "--workspace", str(tmp_workspace)]) == 0
+    assert "ai-sdlc plan" in capsys.readouterr().out
+
+
+def test_plan_append_revokes_prior_approval(tmp_workspace, capsys, monkeypatch):
+    import yaml
+
+    from ai_sdlc.adapters.base import AdapterResult
+    from ai_sdlc.adapters.mock import MockAdapter
+
+    state = _seed(tmp_workspace)  # approvals plan: true
+    (state / "plan" / "requirement-analysis.md").write_text("# Analysis\n", encoding="utf-8")
+
+    proposal = (
+        "### T9 New fix task\n\n"
+        "```yaml\n"
+        "id: T9\n"
+        "status: pending\n"
+        "depends_on: []\n"
+        "persona: developer\n"
+        "```\n\n"
+        "Fix the thing.\n"
+    )
+    adapter = MockAdapter(script={"PLAN": [AdapterResult(ok=True, output=proposal)]})
+    monkeypatch.setattr("ai_sdlc.cli._build_engine_adapter", lambda ws, c, audit_event=None: adapter)
+
+    assert main(["plan", "--workspace", str(tmp_workspace)]) == 0
+    approvals = yaml.safe_load((state / "approvals.yaml").read_text(encoding="utf-8"))
+    assert approvals.get("plan") is False
+    assert "re-approval" in capsys.readouterr().out.lower()
+
+
 def test_cli_develop_is_primary_and_run_is_alias(tmp_workspace, capsys):
     _seed(tmp_workspace)
     assert main(["develop", "--workspace", str(tmp_workspace)]) == 0

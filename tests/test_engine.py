@@ -248,6 +248,46 @@ def test_retry_blocked_flag_needs_no_prompt(tmp_workspace):
     assert summary.status == "completed"
 
 
+def test_no_pending_work_returns_early_with_guidance(tmp_workspace, capsys):
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    doc = PlanDocument.load(ws.plan_path)
+    doc.set_status("T1", "completed")
+    doc.save()
+    _make_git_repo(tmp_workspace)
+    engine = Engine(ws, MockAdapter(), config={}, input_fn=approve_all)
+    summary = engine.run(parallel=False)
+    assert summary.status == "completed"
+    out = capsys.readouterr().out
+    assert "nothing to execute" in out
+    assert "ai-sdlc plan" in out
+    # no branch should be created for a run that does no work
+    branches = _git(tmp_workspace, "branch", "--list").stdout
+    assert "feature/" not in branches
+    assert "no_work" in engine.audit.path.read_text(encoding="utf-8")
+
+
+def test_modify_decision_prints_guidance(tmp_workspace, capsys):
+    ws = seed(tmp_workspace, approve_plan=False)
+    engine = Engine(ws, MockAdapter(), config={}, input_fn=lambda _: "m")
+    summary = engine.run(parallel=False)
+    assert summary.status == "halted"
+    out = capsys.readouterr().out
+    assert "implementation-plan.md" in out
+    assert "ai-sdlc develop" in out
+
+
+def test_branch_slug_cuts_at_word_boundary(tmp_workspace):
+    from ai_sdlc.orchestrator.engine import recommend_branch
+
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    ws.analysis_path.write_text(
+        "# Bug: verification findings after initial build repairs\n", encoding="utf-8"
+    )
+    name, _ = recommend_branch(ws)
+    assert name == "fix/verification-findings-after-initial"
+    assert not name.endswith("-")
+
+
 def test_branch_recommendation_from_analysis_title(tmp_workspace):
     from ai_sdlc.orchestrator.engine import recommend_branch
 
