@@ -83,6 +83,29 @@ def test_warn_unexpected_changes_silent_when_clean(tmp_workspace, capsys):
     assert capsys.readouterr().err == ""
 
 
+def test_cli_retry_resets_blocked_task(tmp_workspace, capsys):
+    from ai_sdlc.state.plan import PlanDocument
+
+    state = _seed(tmp_workspace)
+    plan_path = state / "plan" / "implementation-plan.md"
+    doc = PlanDocument.load(plan_path)
+    doc.set_status("T1", "blocked")
+    doc.save()
+    assert main(["retry", "T1", "--workspace", str(tmp_workspace)]) == 0
+    assert PlanDocument.load(plan_path).get("T1").status == "pending"
+    logs = list((state / "runs").glob("audit-*.jsonl"))
+    assert any("task_retry" in p.read_text(encoding="utf-8") for p in logs)
+
+
+def test_cli_retry_rejects_non_blocked_task(tmp_workspace):
+    from ai_sdlc.state.plan import PlanDocument
+
+    state = _seed(tmp_workspace)
+    plan_path = state / "plan" / "implementation-plan.md"
+    assert main(["retry", "T1", "--workspace", str(tmp_workspace)]) == 1
+    assert PlanDocument.load(plan_path).get("T1").status == "pending"
+
+
 def test_cli_develop_is_primary_and_run_is_alias(tmp_workspace, capsys):
     _seed(tmp_workspace)
     assert main(["develop", "--workspace", str(tmp_workspace)]) == 0

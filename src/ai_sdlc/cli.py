@@ -265,6 +265,35 @@ def cmd_replan(args) -> int:
     return 0
 
 
+def cmd_retry(args) -> int:
+    """Human decision: a blocked task's cause was addressed - make it
+    eligible again so continue/develop picks it up."""
+    ws = _require_workspace(args.workspace)
+    doc = PlanDocument.load(ws.plan_path)
+    try:
+        task = doc.get(args.task_id)
+    except KeyError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if task.status not in ("blocked", "rolled_back"):
+        print(
+            f"error: task {task.id} is {task.status}; only blocked or rolled_back tasks can be retried",
+            file=sys.stderr,
+        )
+        return 1
+    audit = AuditLog(ws.runs_dir, time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
+    doc.set_status(task.id, "pending")
+    doc.save()
+    audit.event(
+        "decision",
+        subject="task_retry",
+        choice=f"reset {task.id} to pending",
+        reasons=["human confirmed the blocking cause was addressed"],
+    )
+    print(f"task {task.id} reset to pending; resume with: ai-sdlc continue")
+    return 0
+
+
 def cmd_summarize(args) -> int:
     ws = _require_workspace(args.workspace)
     markdown = generate_summary(ws)
@@ -395,6 +424,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_push = sub.add_parser("push", parents=[common], help="push the plan's feature branch to origin (human-gated)")
     p_push.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
 
+    p_retry = sub.add_parser("retry", parents=[common], help="reset a blocked task to pending after fixing its cause")
+    p_retry.add_argument("task_id", help="task id to make eligible again (e.g. T3)")
+
     sub.add_parser("summarize", parents=[common], help="generate the engineering summary from project state")
     return parser
 
@@ -413,6 +445,7 @@ def main(argv: list[str] | None = None) -> int:
         "rollback": cmd_rollback,
         "replan": cmd_replan,
         "push": cmd_push,
+        "retry": cmd_retry,
         "summarize": cmd_summarize,
     }
     return handlers[args.command](args)

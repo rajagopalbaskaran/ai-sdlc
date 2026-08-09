@@ -101,6 +101,26 @@ def test_policy_clean_file_passes(tmp_path):
     assert check_policies([str(clean)], tmp_path) == []
 
 
+def test_policy_ignores_placeholder_credentials(tmp_path):
+    readme = tmp_path / "README.md"
+    readme.write_text(
+        'Set DB_PASSWORD="your_password_here" before starting.\n'
+        'password: "<enter-your-password>"\n'
+        'token = "${API_TOKEN}"\n'
+        'secret: "changeme123"\n'
+        'api_key = "example-key-123"\n',
+        encoding="utf-8",
+    )
+    assert check_policies([str(readme)], tmp_path) == []
+
+
+def test_policy_still_flags_realistic_secrets(tmp_path):
+    config = tmp_path / "settings.py"
+    config.write_text('password = "hunter2prodDB99"\n', encoding="utf-8")
+    violations = check_policies([str(config)], tmp_path)
+    assert any("secret" in v.lower() for v in violations)
+
+
 # --- rollback ---
 
 @pytest.fixture

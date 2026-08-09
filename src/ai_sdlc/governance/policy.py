@@ -12,6 +12,19 @@ SECRET_PATTERNS = [
     re.compile(r"AKIA[0-9A-Z]{16}"),
 ]
 
+# documentation examples are not leaks: skip matches whose value is an
+# obvious placeholder (env-var references, angle brackets, well-known
+# placeholder words)
+_PLACEHOLDER_MARKERS = (
+    "${", "$(", "<", "your", "example", "changeme", "change-me",
+    "placeholder", "dummy", "xxx", "enter-", "replace",
+)
+
+
+def _is_placeholder(match_text: str) -> bool:
+    lowered = match_text.lower()
+    return any(marker in lowered for marker in _PLACEHOLDER_MARKERS)
+
 
 def check_policies(
     files_changed: list[str],
@@ -35,7 +48,10 @@ def check_policies(
             continue
         total_lines += content.count("\n")
         for pattern in SECRET_PATTERNS:
-            if pattern.search(content):
+            if any(
+                not _is_placeholder(match.group(0))
+                for match in pattern.finditer(content)
+            ):
                 violations.append(f"{name}: possible secret/credential in code")
                 break
     if total_lines > diff_limit:
