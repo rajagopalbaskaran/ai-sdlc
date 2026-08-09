@@ -231,7 +231,7 @@ Know exactly which actions prompt you and which run automatically:
 | Action | Prompts you? | Notes |
 |---|---|---|
 | Execute the implementation plan | YES - approve/reject/modify | Nothing runs without this; the approval persists so it is asked once per plan |
-| Branch creation | Recommends, you decide | Interactive runs ask: `Branch for this work [Enter = feature/<name>]` - press Enter for the recommendation or type your own. Unattended runs take the default silently. The choice is recorded in the plan and audit |
+| Branch creation | Recommends, you decide | The recommendation is named after the requirement being executed - `feature/<subject>` for new work, `fix/<subject>` for bug fixes (derived from the analysis title; workspace name as fallback). Interactive runs ask: `Branch for this work [Enter = <recommendation>]` - press Enter to accept or type your own. Unattended runs take the recommendation silently. The choice and its source are recorded in the plan and audit |
 | Per-task local commits | Depends on `commit_mode` | `auto` (default): commits happen automatically as rollback save-points - local only, nothing leaves your machine. `ask`: prompts before every commit. `off`: no per-task commits (rollback by task becomes unavailable) |
 | Push to a remote | YES - every time | Never automatic, never remembered; no remote configured means no push at all |
 | Deploy-ready sign-off | YES | Final quality gate when all tasks are green |

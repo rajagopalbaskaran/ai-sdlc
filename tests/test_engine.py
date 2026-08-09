@@ -162,6 +162,40 @@ def test_run_works_on_feature_branch_and_records_it(tmp_workspace):
     assert "branch_selection" in audit_text
 
 
+def test_branch_recommendation_from_analysis_title(tmp_workspace):
+    from ai_sdlc.orchestrator.engine import recommend_branch
+
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    ws.analysis_path.write_text(
+        "# Requirement Analysis: URL Shortener\n\ncontent\n", encoding="utf-8"
+    )
+    name, source = recommend_branch(ws)
+    assert name == "feature/url-shortener"
+    assert "analysis" in source
+
+
+def test_branch_recommendation_detects_bug_fixes(tmp_workspace):
+    from ai_sdlc.orchestrator.engine import recommend_branch
+
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    ws.analysis_path.write_text(
+        "# Bug: Duplicate short codes under concurrent requests\n\ncontent\n",
+        encoding="utf-8",
+    )
+    name, _ = recommend_branch(ws)
+    assert name.startswith("fix/")
+    assert "duplicate-short-codes" in name
+
+
+def test_branch_recommendation_falls_back_to_workspace_name(tmp_workspace):
+    from ai_sdlc.orchestrator.engine import recommend_branch
+
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    name, source = recommend_branch(ws)
+    assert name == "feature/demo-app"
+    assert "workspace" in source
+
+
 class FakeTty:
     def isatty(self):
         return True

@@ -9,6 +9,7 @@ resumes where this one stopped.
 
 from __future__ import annotations
 
+import re
 import sys
 import threading
 import time
@@ -34,6 +35,32 @@ from ai_sdlc.state.kb import load_kb
 from ai_sdlc.state.plan import PlanDocument, Task
 from ai_sdlc.state.profile import load_profile
 from ai_sdlc.workspace import Workspace
+
+
+_BUG_WORDS = re.compile(r"\b(bug|fix|defect|hotfix)\b", re.IGNORECASE)
+_TITLE_PREFIX = re.compile(
+    r"(?i)^(requirement analysis|requirement|bug report|bug|fix|enhancement)\s*:\s*"
+)
+
+
+def recommend_branch(ws: Workspace) -> tuple[str, str]:
+    """Recommend a branch named after the requirement being executed:
+    feature/<subject> for new work, fix/<subject> for bug fixes. Falls back
+    to the workspace name when no analysis exists. Returns (name, source)."""
+    title = ""
+    if ws.analysis_path.is_file():
+        for line in ws.analysis_path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("# "):
+                title = line[2:].strip()
+                break
+    kind = "fix" if title and _BUG_WORDS.search(title) else "feature"
+    subject = _TITLE_PREFIX.sub("", title) if title else ""
+    slug = re.sub(r"[^a-z0-9]+", "-", subject.lower()).strip("-")
+    if len(slug) > 40:
+        slug = slug[:40].rstrip("-")
+    if not slug:
+        return f"feature/{ws.root.name}", "default from workspace name"
+    return f"{kind}/{slug}", "derived from the requirement analysis title"
 
 
 @dataclass
@@ -239,7 +266,7 @@ class Engine:
             elif self.config.get("branch"):
                 branch, source = self.config["branch"], "set in config.yaml"
             else:
-                branch, source = f"feature/{self.ws.root.name}", "default from workspace name"
+                branch, source = recommend_branch(self.ws)
                 # interactive runs get a say: recommend the default, accept a
                 # custom name; unattended runs take the default silently
                 try:
