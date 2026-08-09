@@ -97,6 +97,42 @@ def test_sections_without_yaml_ignored(plan_file):
     assert len(doc.tasks) == 3
 
 
+def test_scalar_list_fields_normalized(tmp_path):
+    text = """# Plan
+
+### Task 1: One
+
+```yaml
+id: T1
+status: pending
+depends_on: T0
+persona: developer
+artifacts: src/app.py
+derived_from: "Analysis section 2.1"
+```
+
+Body.
+
+### Task 0: Zero
+
+```yaml
+id: T0
+status: completed
+depends_on: []
+persona: developer
+```
+
+Body zero.
+"""
+    p = tmp_path / "plan.md"
+    p.write_text(text, encoding="utf-8")
+    doc = PlanDocument.load(p)
+    t1 = doc.get("T1")
+    assert t1.depends_on == ["T0"]
+    assert t1.artifacts == ["src/app.py"]
+    assert t1.derived_from == ["Analysis section 2.1"]
+
+
 SAMPLE_WITH_META = """# Implementation Plan
 
 ```yaml

@@ -26,6 +26,16 @@ VALID_STATUSES = (
 _YAML_BLOCK = re.compile(r"```yaml\n(.*?)```", re.DOTALL)
 
 
+def _as_list(value) -> list[str]:
+    """Planner agents sometimes emit a scalar where a list is expected;
+    normalize both forms to a list of strings."""
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
 @dataclass
 class Task:
     id: str
@@ -135,10 +145,10 @@ class PlanDocument:
                     id=str(data["id"]),
                     title=heading.strip(),
                     status=status,
-                    depends_on=[str(d) for d in data.get("depends_on") or []],
+                    depends_on=_as_list(data.get("depends_on")),
                     persona=data.get("persona", "developer"),
-                    artifacts=[str(a) for a in data.get("artifacts") or []],
-                    derived_from=[str(d) for d in data.get("derived_from") or []],
+                    artifacts=_as_list(data.get("artifacts")),
+                    derived_from=_as_list(data.get("derived_from")),
                     body=body,
                 )
             )
