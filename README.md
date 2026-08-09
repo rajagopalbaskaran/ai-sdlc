@@ -12,16 +12,20 @@ An agentic software engineering framework that transforms a requirement into pro
 Requirement
     |
     v
-Requirement Analysis
+Requirement Analysis ............ raw snapshot committed [ai-sdlc:analysis]
     |
+    |  <- HUMAN reviews (answers ambiguities); reviewed snapshot committed
     v
 Implementation Plan  (= persistent execution state)
-    |
+    |                 ends with a knowledge-base documentation task
+    |  <- HUMAN approves the plan; branch recommended and confirmed
     v
 Development <-> Validation <-> Testing
-    |
+    |            (bounded retries with feedback, policy guardrails,
+    |             per-task commits as rollback save-points)
+    |  <- HUMAN: deploy-ready sign-off, push approval
     v
-Deployment
+Deployment readiness
 ```
 
 The framework follows **spec-driven development**: specifications (requirement analysis, implementation plan) are the source of truth, and agents generate code from specs - never the other way around. What sets it apart from classic spec-driven tooling is that execution is **stateful and governed**: a dependency graph with gates, human approvals, bounded retries, fallback, rollback, and dynamic re-planning.
