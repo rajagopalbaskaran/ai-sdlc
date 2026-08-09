@@ -20,6 +20,19 @@ Each task:
   persona, artifacts, derived_from (link back to the analysis section)
 - Prose describing exactly what to build and how to verify it
 
+## Documentation tasks (mandatory)
+- Greenfield plans MUST end with a knowledge-base documentation task
+  (persona: developer, depends_on all build tasks) that writes, under
+  .ai-sdlc/knowledge-base/:
+  - functional-overview.md: what the system does, user flows, business rules
+  - technical-architecture.md: stack, modules, layering, key decisions
+  - api-reference.md: every endpoint with request, response, and errors
+  - data-model.md: entities, fields, relationships
+- Enhancement and bug-fix plans MUST update the knowledge-base documents
+  affected by the change - inside the fix task when the change is small,
+  or as one closing documentation task. Documentation changes in the same
+  plan as the code it describes.
+
 ## Rules
 - Every task must be independently executable and verifiable.
 - Dependencies must form a DAG (no cycles).

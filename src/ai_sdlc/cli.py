@@ -67,43 +67,79 @@ def _revoke_plan_approval(ws: Workspace, audit, reason: str) -> bool:
     return True
 
 
-def _commit_upstream(ws: Workspace, config: dict, audit) -> bool:
-    """Version the requirement and analysis before planning derives from
-    them - the plan's lineage must point at git-frozen artifacts. Returns
-    False only when a human explicitly declines in ask mode."""
+def _commit_snapshot(
+    ws: Workspace,
+    config: dict,
+    audit,
+    paths: list[str],
+    marker: str,
+    message: str,
+    enforce: bool = False,
+) -> bool:
+    """Version stage artifacts so downstream stages derive from git-frozen
+    inputs. Returns False only when enforce=True and a human explicitly
+    declines in ask mode."""
     if not (ws.root / ".git").is_dir():
-        print("note: workspace is not a git repository - requirement and analysis are not versioned")
+        print("note: workspace is not a git repository - stage artifacts are not versioned")
         return True
-    doc = PlanDocument.load(ws.plan_path)
-    paths: list[str] = []
-    if ws.analysis_path.is_file():
-        paths.append(str(ws.analysis_path.relative_to(ws.root)))
-    requirement = doc.meta.get("requirement")
-    if requirement and (ws.root / requirement).is_file():
-        paths.append(requirement)
+
+    def _has_content(path: Path) -> bool:
+        # empty directories break git commit pathspecs and hold nothing to version
+        if path.is_file():
+            return True
+        return path.is_dir() and any(f.is_file() for f in path.rglob("*"))
+
+    paths = [p for p in paths if _has_content(ws.root / p)]
     if not paths or not paths_dirty(ws.root, paths):
         return True
     mode = config.get("commit_mode", "auto")
     if mode == "off":
-        print("note: commit_mode off - planning against an uncommitted requirement/analysis")
+        print(f"note: commit_mode off - {marker} snapshot not committed")
         return True
     if mode == "ask":
-        decision = request_approval("Commit the requirement and analysis before planning?")
-        audit.event("approval", gate="upstream_commit", decision=decision)
+        decision = request_approval(f"Commit the {marker} snapshot?")
+        audit.event("approval", gate=f"{marker}_snapshot", decision=decision)
         if decision != "approve":
-            print(
-                "planning requires a versioned requirement/analysis; commit them "
-                "yourself or approve the snapshot",
-                file=sys.stderr,
-            )
-            return False
-    committed = commit_paths(
-        ws.root, paths, "requirement", "snapshot requirement and analysis for planning"
-    )
-    audit.event("commit", task="requirement-docs", committed=committed, files=paths)
+            if enforce:
+                print(
+                    f"this step requires a versioned {marker} snapshot; commit it "
+                    "yourself or approve the snapshot",
+                    file=sys.stderr,
+                )
+                return False
+            print(f"note: {marker} snapshot skipped by human decision")
+            return True
+    committed = commit_paths(ws.root, paths, marker, message)
+    audit.event("commit", task=f"{marker}-snapshot", committed=committed, files=paths)
     if committed:
-        print(f"committed requirement/analysis snapshot ({', '.join(paths)})")
+        print(f"committed {marker} snapshot ({', '.join(paths)})")
+    else:
+        print(f"warning: {marker} snapshot commit failed; see git status", file=sys.stderr)
     return True
+
+
+def _upstream_paths(ws: Workspace) -> list[str]:
+    paths: list[str] = []
+    if ws.analysis_path.is_file():
+        paths.append(str(ws.analysis_path.relative_to(ws.root)))
+    requirement = PlanDocument.load(ws.plan_path).meta.get("requirement")
+    if requirement and (ws.root / requirement).is_file():
+        paths.append(requirement)
+    return paths
+
+
+def _commit_upstream(ws: Workspace, config: dict, audit) -> bool:
+    """Plan-start gate: the (reviewed) requirement and analysis must be
+    committed before planning derives tasks from them."""
+    return _commit_snapshot(
+        ws,
+        config,
+        audit,
+        _upstream_paths(ws),
+        "requirement",
+        "reviewed requirement and analysis snapshot for planning",
+        enforce=True,
+    )
 
 
 def _warn_unexpected_changes(ws: Workspace, audit, stage: str, before) -> None:
@@ -194,6 +230,24 @@ def cmd_analyze(args) -> int:
         requirement_rel = str(args.requirement)
     doc.set_meta(requirement=requirement_rel)
     doc.save()
+
+    # freeze what the agent saw (requirement, profile, knowledge base) and
+    # what it concluded (raw analysis) in one snapshot; the plan-start
+    # snapshot later captures the human-reviewed version - the diff between
+    # the two is evidence of human review
+    _commit_snapshot(
+        ws,
+        config,
+        engine.audit,
+        [
+            requirement_rel,
+            ".ai-sdlc/project-profile.md",
+            ".ai-sdlc/knowledge-base",
+            str(ws.analysis_path.relative_to(ws.root)),
+        ],
+        "analysis",
+        "requirement, profile, and raw analysis",
+    )
 
     print(f"analysis written to {out}")
     print("next: review the analysis (answer/adjust ambiguities), then run: ai-sdlc plan")

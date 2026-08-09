@@ -205,21 +205,50 @@ def test_analyze_records_requirement_in_plan_meta(tmp_workspace):
     assert doc.meta.get("requirement")
 
 
-def test_plan_commits_requirement_and_analysis_first(tmp_workspace, monkeypatch, capsys):
+def test_analyze_commits_raw_then_plan_commits_reviewed(tmp_workspace, monkeypatch):
+    import subprocess
+
+    state = _seed(tmp_workspace)
+    _make_git(tmp_workspace)
+    req = tmp_workspace / "req.md"
+    req.write_text("# Something\n\nDo it.\n", encoding="utf-8")
+    assert main(["analyze", str(req), "--workspace", str(tmp_workspace)]) == 0
+    log = subprocess.run(
+        ["git", "log", "--format=%s"], cwd=tmp_workspace, capture_output=True, text=True
+    ).stdout
+    # raw snapshot: what the agent saw and concluded
+    assert "[ai-sdlc:analysis]" in log
+
+    # human review edits the analysis
+    analysis = state / "plan" / "requirement-analysis.md"
+    analysis.write_text(
+        analysis.read_text(encoding="utf-8") + "\nReviewed: assumption A3 corrected.\n",
+        encoding="utf-8",
+    )
+    _mock_planner(monkeypatch)
+    assert main(["plan", "--workspace", str(tmp_workspace)]) == 0
+    log = subprocess.run(
+        ["git", "log", "--format=%s"], cwd=tmp_workspace, capture_output=True, text=True
+    ).stdout
+    # reviewed snapshot: what the human approved for planning
+    assert "[ai-sdlc:requirement]" in log
+
+
+def test_plan_skips_snapshot_when_analysis_unchanged(tmp_workspace, monkeypatch):
     import subprocess
 
     _seed(tmp_workspace)
     _make_git(tmp_workspace)
     req = tmp_workspace / "req.md"
-    req.write_text("# Something\n\nDo it.\n", encoding="utf-8")
+    req.write_text("# Something\n", encoding="utf-8")
     assert main(["analyze", str(req), "--workspace", str(tmp_workspace)]) == 0
     _mock_planner(monkeypatch)
     assert main(["plan", "--workspace", str(tmp_workspace)]) == 0
     log = subprocess.run(
         ["git", "log", "--format=%s"], cwd=tmp_workspace, capture_output=True, text=True
     ).stdout
-    assert "[ai-sdlc:requirement]" in log
-    assert "committed requirement/analysis snapshot" in capsys.readouterr().out
+    # nothing was edited after the raw snapshot -> no second snapshot
+    assert "[ai-sdlc:requirement]" not in log
 
 
 def test_plan_without_git_warns_and_proceeds(tmp_workspace, monkeypatch, capsys):
