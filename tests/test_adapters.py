@@ -53,3 +53,39 @@ def test_claude_code_argv_and_missing_binary(monkeypatch, tmp_path):
     assert "claude" in captured["argv"][0]
     assert "-p" in captured["argv"]
     assert result.error is not None
+
+
+def test_text_personas_denied_edit_permission(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        raise FileNotFoundError("claude not found")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    adapter = ClaudeCodeAdapter(workdir=tmp_path)
+    for persona in ("requirement_analyst", "implementation_planner", "validator"):
+        adapter.execute(persona, "ctx", make_task())
+        assert "--permission-mode" not in captured["argv"], persona
+    for persona in ("developer", "tester", "deployment_engineer"):
+        adapter.execute(persona, "ctx", make_task())
+        assert "--permission-mode" in captured["argv"], persona
+        assert "acceptEdits" in captured["argv"], persona
+
+
+def test_persona_permission_config_override(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        raise FileNotFoundError("claude not found")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    adapter = ClaudeCodeAdapter(
+        workdir=tmp_path,
+        persona_permissions={"validator": "edit", "developer": "text"},
+    )
+    adapter.execute("validator", "ctx", make_task())
+    assert "--permission-mode" in captured["argv"]
+    adapter.execute("developer", "ctx", make_task())
+    assert "--permission-mode" not in captured["argv"]

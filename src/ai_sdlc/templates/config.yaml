@@ -10,3 +10,6 @@ approval_gates:            # stages requiring human approval at their exit gate
   - deploy_ready
 claude_command: claude     # binary used by the claude-code adapter
 task_timeout_seconds: 600
+# persona_permissions:     # optional override of file-edit rights per persona
+#   validator: edit        #   "edit" grants file edits, "text" denies them
+#   developer: text        #   defaults: analyst/planner/validator=text, rest=edit

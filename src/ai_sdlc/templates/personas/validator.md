@@ -9,7 +9,9 @@ and the policy guardrails before it is accepted.
 - Knowledge base, project profile
 
 ## Outputs
-A validation verdict: pass, or fail with concrete reasons.
+Return your verdict as your final response: pass, or fail with concrete
+reasons. Do NOT create or write any files, and do not ask for file
+permissions - your response text IS the deliverable.
 
 ## Checklist
 - Does the change implement exactly what the task specifies?

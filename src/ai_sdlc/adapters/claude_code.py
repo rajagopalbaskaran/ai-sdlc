@@ -26,13 +26,34 @@ Complete ONLY the single task given. Report what you changed.
 """
 
 
+# personas whose deliverable is their response text; they get NO file-edit
+# permission - the boundary is enforced, not just requested in the persona
+TEXT_PERSONAS = frozenset({"requirement_analyst", "implementation_planner", "validator"})
+
+
 class ClaudeCodeAdapter(Adapter):
     name = "claude-code"
 
-    def __init__(self, command: str = "claude", timeout: int = 600, workdir: Path | None = None):
+    def __init__(
+        self,
+        command: str = "claude",
+        timeout: int = 600,
+        workdir: Path | None = None,
+        persona_permissions: dict[str, str] | None = None,
+    ):
         self.command = command
         self.timeout = timeout
         self.workdir = Path(workdir) if workdir else None
+        # optional config override: {persona: "edit" | "text"}
+        self.persona_permissions = persona_permissions or {}
+
+    def _allows_edits(self, persona: str) -> bool:
+        override = self.persona_permissions.get(persona)
+        if override == "edit":
+            return True
+        if override == "text":
+            return False
+        return persona not in TEXT_PERSONAS
 
     def execute(self, persona: str, context: str, task: "Task") -> AdapterResult:
         prompt = PROMPT_TEMPLATE.format(
@@ -41,18 +62,11 @@ class ClaudeCodeAdapter(Adapter):
             task_title=task.title,
             task_body=task.body,
         )
-        # acceptEdits: file edits inside the workspace are auto-approved for
-        # personas that legitimately write code (developer, tester); analyst
-        # and planner personas return text and are told not to touch files
-        argv = [
-            self.command,
-            "-p",
-            prompt,
-            "--output-format",
-            "text",
-            "--permission-mode",
-            "acceptEdits",
-        ]
+        argv = [self.command, "-p", prompt, "--output-format", "text"]
+        if self._allows_edits(persona):
+            # file edits inside the workspace auto-approved for personas that
+            # legitimately write code and docs (developer, tester, deployment)
+            argv += ["--permission-mode", "acceptEdits"]
         try:
             proc = subprocess.run(
                 argv,

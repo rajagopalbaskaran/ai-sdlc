@@ -39,5 +39,6 @@ def build_adapter(name: str, config: dict) -> Adapter:
             command=config.get("claude_command", "claude"),
             timeout=config.get("task_timeout_seconds", 600),
             workdir=config.get("workdir"),
+            persona_permissions=config.get("persona_permissions") or {},
         )
     raise ValueError(f"unknown adapter {name!r}; available: mock, claude-code")

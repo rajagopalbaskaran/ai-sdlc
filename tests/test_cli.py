@@ -53,6 +53,36 @@ def test_cli_run_status_report(tmp_workspace, capsys):
     assert list((state / "runs").glob("report-*.md"))
 
 
+def test_warn_unexpected_changes_detects_and_audits(tmp_workspace, capsys):
+    from ai_sdlc.changes import snapshot
+    from ai_sdlc.cli import _warn_unexpected_changes
+    from ai_sdlc.observability.audit import AuditLog
+    from ai_sdlc.workspace import Workspace
+
+    main(["init", "--workspace", str(tmp_workspace)])
+    ws = Workspace(tmp_workspace)
+    audit = AuditLog(ws.runs_dir, "guard-test")
+    before = snapshot(tmp_workspace)
+    (tmp_workspace / "sneaky.txt").write_text("should not happen", encoding="utf-8")
+    _warn_unexpected_changes(ws, audit, "analyze", before)
+    assert "unexpectedly changed 1 file" in capsys.readouterr().err
+    assert "policy_warning" in audit.path.read_text(encoding="utf-8")
+
+
+def test_warn_unexpected_changes_silent_when_clean(tmp_workspace, capsys):
+    from ai_sdlc.changes import snapshot
+    from ai_sdlc.cli import _warn_unexpected_changes
+    from ai_sdlc.observability.audit import AuditLog
+    from ai_sdlc.workspace import Workspace
+
+    main(["init", "--workspace", str(tmp_workspace)])
+    ws = Workspace(tmp_workspace)
+    audit = AuditLog(ws.runs_dir, "guard-clean")
+    before = snapshot(tmp_workspace)
+    _warn_unexpected_changes(ws, audit, "analyze", before)
+    assert capsys.readouterr().err == ""
+
+
 def test_cli_status_empty_plan(tmp_workspace, capsys):
     main(["init", "--workspace", str(tmp_workspace)])
     assert main(["status", "--workspace", str(tmp_workspace)]) == 0

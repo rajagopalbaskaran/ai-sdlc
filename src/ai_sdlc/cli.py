@@ -11,6 +11,7 @@ from pathlib import Path
 import yaml
 
 from ai_sdlc.adapters.base import build_adapter
+from ai_sdlc.changes import diff, snapshot
 from ai_sdlc.governance.approvals import request_approval
 from ai_sdlc.governance.branching import current_branch, push_branch
 from ai_sdlc.governance.fallback import FallbackChain
@@ -40,6 +41,19 @@ def _build_engine_adapter(ws: Workspace, config: dict, audit_event=None):
     if not fallbacks:
         return primary
     return FallbackChain([primary, *fallbacks], on_fallback=audit_event)
+
+
+def _warn_unexpected_changes(ws: Workspace, audit, stage: str, before) -> None:
+    """Text stages (analyze/plan/replan) must not modify the workspace.
+    Any detected change is audited and surfaced - defense in depth on top of
+    the adapter's permission denial."""
+    changed = diff(before, snapshot(ws.root))
+    if changed:
+        audit.event("policy_warning", stage=stage, count=len(changed), files=changed[:20])
+        print(
+            f"warning: {stage} stage unexpectedly changed {len(changed)} file(s); see audit log",
+            file=sys.stderr,
+        )
 
 
 def _require_workspace(root: Path) -> Workspace:
@@ -75,7 +89,9 @@ def cmd_analyze(args) -> int:
     )
     engine.audit.event("stage_started", stage="analyze")
     engine.audit.event("task_started", task="ANALYZE", persona="requirement_analyst")
+    before = snapshot(ws.root)
     result = engine.adapter.execute("requirement_analyst", engine._context_for(task), task)
+    _warn_unexpected_changes(ws, engine.audit, "analyze", before)
     if not result.ok:
         engine.audit.event("task_failed", task="ANALYZE", error=result.error or "unknown")
         print(f"analysis failed: {result.error}", file=sys.stderr)
@@ -106,7 +122,9 @@ def cmd_plan(args) -> int:
     )
     engine.audit.event("stage_started", stage="plan")
     engine.audit.event("task_started", task="PLAN", persona="implementation_planner")
+    before = snapshot(ws.root)
     result = engine.adapter.execute("implementation_planner", engine._context_for(task), task)
+    _warn_unexpected_changes(ws, engine.audit, "plan", before)
     if not result.ok:
         engine.audit.event("task_failed", task="PLAN", error=result.error or "unknown")
         print(f"planning failed: {result.error}", file=sys.stderr)
@@ -170,7 +188,9 @@ def cmd_replan(args) -> int:
             persona="requirement_analyst",
             body=Path(args.requirement).read_text(encoding="utf-8"),
         )
+        before = snapshot(ws.root)
         result = engine.adapter.execute("requirement_analyst", engine._context_for(task), task)
+        _warn_unexpected_changes(ws, audit, "replan-analyze", before)
         if not result.ok:
             print(f"re-analysis failed: {result.error}", file=sys.stderr)
             return 1
@@ -196,7 +216,9 @@ def cmd_replan(args) -> int:
                 f"## Current analysis\n\n{analysis}\n\n## Current plan\n\n{current_text}"
             ),
         )
+        before = snapshot(ws.root)
         result = engine.adapter.execute("implementation_planner", engine._context_for(task), task)
+        _warn_unexpected_changes(ws, audit, "replan-propose", before)
         if not result.ok:
             print(f"re-planning failed: {result.error}", file=sys.stderr)
             return 1

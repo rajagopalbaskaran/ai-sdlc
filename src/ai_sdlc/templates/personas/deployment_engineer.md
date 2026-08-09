@@ -12,6 +12,9 @@ Produce deployment-readiness artifacts for the validated, tested workspace.
 - Release checklist: what must be true before shipping
 - Known risks and rollback procedure for the release
 
+You MAY create and edit files inside the workspace (runbook and checklist
+documents). Never write outside the workspace.
+
 ## Rules
 - Readiness artifacts only; this framework does not deploy real infrastructure.
 - Every claim in the runbook must be verifiable from the workspace contents.
