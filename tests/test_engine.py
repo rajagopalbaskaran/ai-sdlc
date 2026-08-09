@@ -361,6 +361,34 @@ def test_interactive_branch_prompt_empty_accepts_recommendation(tmp_workspace, m
     assert PlanDocument.load(ws.plan_path).meta.get("branch") == "feature/demo-app"
 
 
+def test_run_record_commits_state_at_run_end(tmp_workspace):
+    # plan NOT pre-approved: the approval granted during the run makes
+    # approvals.yaml part of the run record
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE, approve_plan=False)
+    _make_git_repo(tmp_workspace)
+    engine = Engine(
+        ws, WritingAdapter(tmp_workspace), config={"commit_mode": "auto"}, input_fn=approve_all
+    )
+    assert engine.run(parallel=False).status == "completed"
+    log = _git(tmp_workspace, "log", "--format=%H %s").stdout
+    assert "[ai-sdlc:run]" in log
+    record_sha = next(line.split()[0] for line in log.splitlines() if "[ai-sdlc:run]" in line)
+    shown = _git(tmp_workspace, "show", "--name-only", "--format=", record_sha).stdout
+    assert "audit-" in shown                      # the audit jsonl is versioned
+    assert "implementation-plan.md" in shown      # plan statuses as they stand
+    assert "approvals.yaml" in shown
+
+
+def test_run_record_skipped_when_commit_mode_off(tmp_workspace):
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    _make_git_repo(tmp_workspace)
+    engine = Engine(
+        ws, WritingAdapter(tmp_workspace), config={"commit_mode": "off"}, input_fn=approve_all
+    )
+    assert engine.run(parallel=False).status == "completed"
+    assert "[ai-sdlc:run]" not in _git(tmp_workspace, "log", "--format=%s").stdout
+
+
 def test_push_gate_approved_pushes_to_remote(tmp_workspace, tmp_path):
     import subprocess
 
@@ -503,9 +531,10 @@ def test_auto_commit_per_task_excludes_state(tmp_workspace):
         ws, WritingAdapter(tmp_workspace), config={"commit_mode": "auto"}, input_fn=approve_all
     )
     assert engine.run(parallel=False).status == "completed"
-    subjects = _git(tmp_workspace, "log", "--format=%s").stdout
-    assert "[ai-sdlc:T1]" in subjects
-    shown = _git(tmp_workspace, "show", "--name-only", "--format=", "HEAD").stdout
+    log = _git(tmp_workspace, "log", "--format=%H %s").stdout
+    assert "[ai-sdlc:T1]" in log
+    task_sha = next(line.split()[0] for line in log.splitlines() if "[ai-sdlc:T1]" in line)
+    shown = _git(tmp_workspace, "show", "--name-only", "--format=", task_sha).stdout
     assert "src_T1.py" in shown
     assert ".ai-sdlc" not in shown
 

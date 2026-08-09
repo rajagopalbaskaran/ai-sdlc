@@ -29,7 +29,7 @@ from ai_sdlc.governance.approvals import request_approval
 from ai_sdlc.governance.branching import checkout_branch, has_remote, push_branch
 from ai_sdlc.governance.policy import check_policies
 from ai_sdlc.governance.retry import RetryPolicy
-from ai_sdlc.governance.rollback import commit_task
+from ai_sdlc.governance.rollback import commit_paths, commit_task, paths_dirty
 from ai_sdlc.observability.audit import AuditLog
 from ai_sdlc.orchestrator.dag import detect_cycles, eligible_tasks, terminal
 from ai_sdlc.orchestrator.gates import GateContext, entry_gate, exit_gate
@@ -276,6 +276,39 @@ class Engine:
                     reasons=["human confirmed the blocking cause was addressed"],
                 )
 
+    def _commit_run_record(self, status: str) -> None:
+        """Version the execution record at the run boundary: audit log, plan
+        statuses, approvals. Task commits deliberately exclude .ai-sdlc so
+        rollbacks cannot corrupt state; run boundaries are where the state is
+        consistent and worth freezing."""
+        if not (self.ws.root / ".git").is_dir():
+            return
+        mode = self.config.get("commit_mode", "auto")
+        if mode == "off":
+            return
+        paths: list[str] = []
+        for candidate in (
+            ".ai-sdlc/runs",
+            ".ai-sdlc/plan/implementation-plan.md",
+            ".ai-sdlc/approvals.yaml",
+        ):
+            path = self.ws.root / candidate
+            if path.is_file() or (path.is_dir() and any(f.is_file() for f in path.rglob("*"))):
+                paths.append(candidate)
+        if not paths or not paths_dirty(self.ws.root, paths):
+            return
+        if mode == "ask":
+            decision = request_approval(
+                f"Commit the run record ({self.run_id})?", input_fn=self.input_fn
+            )
+            self.audit.event("approval", gate="run_record", decision=decision)
+            if decision != "approve":
+                return
+        committed = commit_paths(
+            self.ws.root, paths, "run", f"run {self.run_id} record ({status})"
+        )
+        self.audit.event("commit", task="run-record", committed=committed)
+
     # --- the run loop ---
 
     def run(self, parallel: bool | None = None, retry_blocked: bool = False) -> RunSummary:
@@ -315,6 +348,7 @@ class Engine:
             )
             self.audit.event("run_stopped", reason="stale analysis")
             print(reason)
+            self._commit_run_record("halted")
             return self._summary(doc, "halted")
 
         gate = entry_gate("develop", GateContext(tasks=doc.tasks, approvals=approvals))
@@ -326,6 +360,7 @@ class Engine:
         )
         if not gate.passed:
             self.audit.event("run_stopped", reason="entry gate failed")
+            self._commit_run_record("halted")
             return self._summary(doc, "halted")
 
         # blocked work never resumes silently: offer the human the decision
@@ -345,6 +380,7 @@ class Engine:
                 reasons=["no pending tasks in the plan"],
             )
             self.audit.event("run_completed")
+            self._commit_run_record("no-work")
             return self._summary(doc, "completed")
 
         # feature-branch lifecycle: agents work on a branch recorded in the
@@ -401,6 +437,7 @@ class Engine:
             with self._lock:
                 doc.save()
             self.audit.event("run_stopped", reason="safe-stop (interrupt)")
+            self._commit_run_record("stopped")
             return self._summary(doc, "stopped")
 
         self.audit.event("stage_completed", stage="develop")
@@ -416,6 +453,10 @@ class Engine:
             self._ensure_approval(
                 "deploy_ready", "Mark this workspace deploy-ready?", approvals
             )
+        # freeze the execution record before offering to publish, so a
+        # pushed branch carries its own audit trail
+        final_status = "completed" if exit_result.passed else "halted"
+        self._commit_run_record(final_status)
         # push gate: publishing is high-impact -> asked EVERY time, never
         # persisted, never automatic
         if exit_result.passed and branch and has_remote(self.ws.root):
@@ -427,7 +468,7 @@ class Engine:
                 pushed, detail = push_branch(self.ws.root, branch)
                 self.audit.event("push", branch=branch, ok=pushed, detail=detail)
         self.audit.event("run_completed")
-        return self._summary(doc, "completed" if exit_result.passed else "halted")
+        return self._summary(doc, final_status)
 
     def _summary(self, doc: PlanDocument, status: str) -> RunSummary:
         return RunSummary(
