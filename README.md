@@ -26,7 +26,7 @@ Deployment
 
 The framework follows **spec-driven development**: specifications (requirement analysis, implementation plan) are the source of truth, and agents generate code from specs - never the other way around. What sets it apart from classic spec-driven tooling is that execution is **stateful and governed**: a dependency graph with gates, human approvals, bounded retries, fallback, rollback, and dynamic re-planning.
 
-- **Knowledge Base** - functional docs, technical docs, architecture, API/DB design, coding standards. Every agent reasons against this context.
+- **Knowledge Base** - functional docs, technical docs, architecture, API/DB design, coding standards. Every agent reasons against this context. The KB has a lifecycle: greenfield plans MUST end with a documentation task that writes it (functional overview, technical architecture, API reference, data model); every bug fix or enhancement plan updates the affected documents in the same plan as the code - so brownfield work always starts from current, versioned documentation.
 - **Project Profile** - the project's stack and conventions, established once and used by every agent.
 - **Implementation Plan as execution state** - every task carries a status (pending / in_progress / waiting_approval / completed / blocked / rolled_back) in a small yaml block that only the orchestrator writes. It is the single source of truth, which also gives the framework **resume capability**: stop anytime (Ctrl+C is safe), then run `ai-sdlc develop` again - it always continues from the current state.
 - **Stateless persona agents** - Requirement Analyst, Implementation Planner, Developer, Validator, Tester, Deployment Engineer. Each derives all context from the Knowledge Base, Project Profile, and current Plan.
@@ -140,14 +140,20 @@ Build a URL shortener service:
 
 ```
 ai-sdlc analyze requirement.md   # agent writes plan/requirement-analysis.md
+#   -> commits the [ai-sdlc:analysis] snapshot: what the agent saw
+#      (requirement, profile, KB) and what it concluded (raw analysis)
 #   -> YOU review it: answer ambiguity questions, fix wrong assumptions
 
 ai-sdlc plan                     # agent appends tasks to implementation-plan.md
+#   -> first commits the [ai-sdlc:requirement] snapshot: your REVIEWED
+#      analysis (diff vs the raw snapshot = evidence of human review)
 #   -> YOU review the tasks and dependencies in your editor
+#   -> greenfield plans end with a knowledge-base documentation task
 
 ai-sdlc develop                  # asks: Approve the implementation plan? [a/r/m]
 #   -> agents execute task by task on a feature branch:
-#      retries, policy checks, per-task commits, audit logging
+#      retries (validation failures feed back into the next attempt),
+#      policy checks, per-task commits, audit logging
 #   -> at the end (if a git remote exists): Push branch? [a/r/m]
 ```
 
@@ -242,6 +248,7 @@ Know exactly which actions prompt you and which run automatically:
 | Execute the implementation plan | YES - approve/reject/modify | Nothing runs without this; the approval persists so it is asked once per plan |
 | Branch creation | Recommends, you decide | The recommendation is named after the requirement being executed - `feature/<subject>` for new work, `fix/<subject>` for bug fixes (derived from the analysis title; workspace name as fallback). Interactive runs ask: `Branch for this work [Enter = <recommendation>]` - press Enter to accept or type your own. Unattended runs take the recommendation silently. The choice and its source are recorded in the plan and audit |
 | Per-task local commits | Depends on `commit_mode` | `auto` (default): commits happen automatically as rollback save-points - local only, nothing leaves your machine. `ask`: prompts before every commit. `off`: no per-task commits (rollback by task becomes unavailable) |
+| Stage-artifact snapshots | Depends on `commit_mode` | analyze commits the raw analysis snapshot; plan commits the reviewed one. Same auto/ask/off rules; in ask mode, declining the planning snapshot aborts planning - tasks may never derive from unversioned upstream |
 | Push to a remote | YES - every time | Never automatic, never remembered; no remote configured means no push at all |
 | Deploy-ready sign-off | YES | Final quality gate when all tasks are green |
 | Rollback / replan | YES | Confirmation prompts (or explicit `--yes`) |
@@ -269,6 +276,8 @@ Agents execute under defined autonomy boundaries; humans stay in control:
 - Dynamic re-planning: requirement changed mid-flight -> diff the plan, protect completed work, revise pending tasks, re-approve; a stale-analysis gate refuses to execute a plan whose analysis changed after approval
 - Safe-stop: interrupt at any point; state on disk stays consistent and rerunning develop resumes it
 - Validation inside the retry loop: a policy-rejected output is a failed attempt whose reason feeds the next try; the agent self-corrects within the bounded budget, then blocks for the human
+- Approval integrity: a new analysis or newly appended tasks revoke the prior plan approval (and deploy-ready sign-off) - unreviewed work can never execute under an old approval; a new requirement also releases the branch pin so its work gets its own branch
+- Stage lineage in git: requirement -> raw analysis -> reviewed analysis -> approved plan -> per-task commits, each frozen before the next stage consumes it
 - Audit-grade observability: append-only JSONL log of every agent call, gate decision, approval, retry, fallback, rollback, branch, and push
 - Reliability metrics: success rate, retry/rollback frequency, MTTR, end-to-end latency, and latency by stage
 
