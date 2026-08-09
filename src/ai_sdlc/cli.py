@@ -55,6 +55,8 @@ def _revoke_plan_approval(ws: Workspace, audit, reason: str) -> bool:
         return False
     approvals["plan"] = False
     approvals.pop("analysis_sha", None)
+    # downstream sign-offs derived from the old plan fall with it
+    approvals.pop("deploy_ready", None)
     approvals_path.write_text(yaml.safe_dump(approvals), encoding="utf-8")
     audit.event(
         "decision",
