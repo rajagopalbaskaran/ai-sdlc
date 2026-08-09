@@ -21,7 +21,9 @@ from typing import Callable
 
 import yaml
 
-from ai_sdlc.adapters.base import Adapter
+import json
+
+from ai_sdlc.adapters.base import Adapter, AdapterResult
 from ai_sdlc.changes import diff, snapshot
 from ai_sdlc.governance.approvals import request_approval
 from ai_sdlc.governance.branching import checkout_branch, has_remote, push_branch
@@ -149,11 +151,31 @@ class Engine:
         retry = RetryPolicy(self.config.get("retry_budget", 2))
         before = snapshot(self.ws.root)
 
-        def attempt(last_error: str | None):
+        def attempt(last_error: str | None) -> AdapterResult:
+            """One full cycle: do the work, then validate it. A validation
+            failure is a failed attempt whose reason feeds the next try -
+            the agent gets the same self-correction chance for policy
+            violations as for crashes."""
             ctx = context
             if last_error:
                 ctx = context + f"\n\n## Previous attempt failed\n\n{last_error}"
-            return self.adapter.execute(task.persona, ctx, task)
+            result = self.adapter.execute(task.persona, ctx, task)
+            if not result.ok:
+                return result
+            files_changed = sorted(
+                set(result.files_changed) | set(diff(before, snapshot(self.ws.root)))
+            )
+            violations = check_policies(
+                files_changed, self.ws.root, self.config.get("diff_limit", 500)
+            )
+            if violations:
+                return AdapterResult(
+                    ok=False,
+                    output=result.output,
+                    files_changed=files_changed,
+                    error="policy: " + "; ".join(violations),
+                )
+            return AdapterResult(ok=True, output=result.output, files_changed=files_changed)
 
         result = retry.attempt(
             task, attempt, on_retry=lambda **kw: self.audit.event("retry", **kw)
@@ -167,24 +189,11 @@ class Engine:
             self._set_status(doc, task.id, "blocked")
             return
 
-        # trust the adapter's report when present, but always verify what
-        # actually changed on disk
-        files_changed = sorted(set(result.files_changed) | set(diff(before, snapshot(self.ws.root))))
-        violations = check_policies(
-            files_changed, self.ws.root, self.config.get("diff_limit", 500)
-        )
-        if violations:
-            self.audit.event(
-                "task_failed", task=task.id, error="policy: " + "; ".join(violations), seconds=elapsed
-            )
-            self._set_status(doc, task.id, "blocked")
-            return
-
         self._set_status(doc, task.id, "completed")
         self.audit.event(
-            "task_completed", task=task.id, files_changed=len(files_changed), seconds=elapsed
+            "task_completed", task=task.id, files_changed=len(result.files_changed), seconds=elapsed
         )
-        self._maybe_commit(task, files_changed)
+        self._maybe_commit(task, result.files_changed)
 
     def _maybe_commit(self, task: Task, files_changed: list[str]) -> None:
         """Local per-task save-point in the TARGET workspace. Never pushes.
@@ -205,9 +214,60 @@ class Engine:
             committed = commit_task(self.ws.root, task.id, task.title)
         self.audit.event("commit", task=task.id, committed=committed)
 
+    # --- blocked-task guidance ---
+
+    @staticmethod
+    def _interactive() -> bool:
+        try:
+            return bool(sys.stdin and sys.stdin.isatty())
+        except (AttributeError, ValueError):
+            return False
+
+    def blocked_report(self, doc: PlanDocument | None = None) -> list[tuple[str, str]]:
+        """Blocked task ids with their most recent failure reason from the
+        audit history - so humans see WHY, not just WHAT."""
+        doc = doc or PlanDocument.load(self.ws.plan_path)
+        reasons = {t.id: "" for t in doc.tasks if t.status == "blocked"}
+        if not reasons:
+            return []
+        for log in sorted(self.ws.runs_dir.glob("audit-*.jsonl")):
+            for line in log.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                event = json.loads(line)
+                if event.get("type") == "task_failed" and event.get("task") in reasons:
+                    reasons[event["task"]] = event.get("error", "")
+        return sorted(reasons.items())
+
+    def _offer_blocked_retry(self, doc: PlanDocument, retry_blocked: bool) -> None:
+        blocked = self.blocked_report(doc)
+        if not blocked:
+            return
+        if not retry_blocked and self._interactive():
+            print(f"{len(blocked)} blocked task(s):")
+            for task_id, reason in blocked:
+                print(f"  {task_id} - {reason or 'see audit log'}")
+            try:
+                answer = self.input_fn(
+                    "Have the causes been addressed? Retry blocked tasks now? [y/N]: "
+                )
+            except (EOFError, OSError):
+                answer = ""
+            retry_blocked = answer.strip().lower() in ("y", "yes")
+        if retry_blocked:
+            for task_id, _ in blocked:
+                self._set_status(doc, task_id, "pending")
+                self.audit.event(
+                    "decision",
+                    subject="task_retry",
+                    choice=f"reset {task_id} to pending",
+                    reasons=["human confirmed the blocking cause was addressed"],
+                )
+
     # --- the run loop ---
 
-    def run(self, parallel: bool | None = None) -> RunSummary:
+    def run(self, parallel: bool | None = None, retry_blocked: bool = False) -> RunSummary:
         if parallel is None:
             parallel = bool(self.config.get("parallel", False))
 
@@ -256,6 +316,10 @@ class Engine:
         if not gate.passed:
             self.audit.event("run_stopped", reason="entry gate failed")
             return self._summary(doc, "halted")
+
+        # blocked work never resumes silently: offer the human the decision
+        # (or honor an explicit --retry-blocked)
+        self._offer_blocked_retry(doc, retry_blocked)
 
         # feature-branch lifecycle: agents work on a branch recorded in the
         # plan; main stays clean. No-op when the workspace has no git repo.

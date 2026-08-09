@@ -162,6 +162,92 @@ def test_run_works_on_feature_branch_and_records_it(tmp_workspace):
     assert "branch_selection" in audit_text
 
 
+class SelfCorrectingAdapter(Adapter):
+    """Writes a secret on the first attempt; fixes it after policy feedback."""
+
+    name = "self-correcting"
+
+    def __init__(self, root):
+        self.root = root
+        self.calls = 0
+        self.feedback_seen = False
+
+    def execute(self, persona, context, task):
+        self.calls += 1
+        target = self.root / "config.py"
+        if self.calls == 1:
+            target.write_text('password = "hunter2prodDB99"\n', encoding="utf-8")
+        else:
+            self.feedback_seen = "policy" in context
+            target.write_text('password = "${DB_PASSWORD}"\n', encoding="utf-8")
+        return AdapterResult(ok=True, output="done")
+
+
+def test_policy_violation_retries_with_feedback_then_succeeds(tmp_workspace):
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    adapter = SelfCorrectingAdapter(tmp_workspace)
+    engine = Engine(ws, adapter, config={"retry_budget": 2}, input_fn=approve_all)
+    summary = engine.run(parallel=False)
+    assert summary.status == "completed"
+    assert adapter.calls == 2
+    assert adapter.feedback_seen  # violation text reached the second attempt
+    audit_text = engine.audit.path.read_text(encoding="utf-8")
+    assert '"retry"' in audit_text
+
+
+def test_develop_offers_retry_of_blocked_tasks_interactively(tmp_workspace, monkeypatch):
+    import sys
+
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    doc = PlanDocument.load(ws.plan_path)
+    doc.set_status("T1", "blocked")
+    doc.save()
+    monkeypatch.setattr(sys, "stdin", FakeTty())
+
+    def answers(prompt):
+        if "Retry blocked" in prompt:
+            return "y"
+        if "Branch" in prompt:
+            return ""
+        return "a"
+
+    engine = Engine(ws, MockAdapter(), config={}, input_fn=answers)
+    summary = engine.run(parallel=False)
+    assert summary.status == "completed"
+    assert PlanDocument.load(ws.plan_path).get("T1").status == "completed"
+    assert "task_retry" in engine.audit.path.read_text(encoding="utf-8")
+
+
+def test_develop_default_keeps_blocked_tasks(tmp_workspace, monkeypatch):
+    import sys
+
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    doc = PlanDocument.load(ws.plan_path)
+    doc.set_status("T1", "blocked")
+    doc.save()
+    monkeypatch.setattr(sys, "stdin", FakeTty())
+
+    def answers(prompt):
+        if "Retry blocked" in prompt:
+            return ""  # default: No
+        return "a"
+
+    engine = Engine(ws, MockAdapter(), config={}, input_fn=answers)
+    summary = engine.run(parallel=False)
+    assert summary.status == "halted"
+    assert PlanDocument.load(ws.plan_path).get("T1").status == "blocked"
+
+
+def test_retry_blocked_flag_needs_no_prompt(tmp_workspace):
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    doc = PlanDocument.load(ws.plan_path)
+    doc.set_status("T1", "blocked")
+    doc.save()
+    engine = Engine(ws, MockAdapter(), config={}, input_fn=approve_all)
+    summary = engine.run(parallel=False, retry_blocked=True)
+    assert summary.status == "completed"
+
+
 def test_branch_recommendation_from_analysis_title(tmp_workspace):
     from ai_sdlc.orchestrator.engine import recommend_branch
 

@@ -28,7 +28,7 @@ The framework follows **spec-driven development**: specifications (requirement a
 
 - **Knowledge Base** - functional docs, technical docs, architecture, API/DB design, coding standards. Every agent reasons against this context.
 - **Project Profile** - the project's stack and conventions, established once and used by every agent.
-- **Implementation Plan as execution state** - every task carries a status (pending / in_progress / waiting_approval / completed / blocked / rolled_back) in a small yaml block that only the orchestrator writes. It is the single source of truth, which also gives the framework **resume capability**: stop anytime (Ctrl+C is safe), then `ai-sdlc continue` picks up exactly where work left off.
+- **Implementation Plan as execution state** - every task carries a status (pending / in_progress / waiting_approval / completed / blocked / rolled_back) in a small yaml block that only the orchestrator writes. It is the single source of truth, which also gives the framework **resume capability**: stop anytime (Ctrl+C is safe), then run `ai-sdlc develop` again - it always continues from the current state.
 - **Stateless persona agents** - Requirement Analyst, Implementation Planner, Developer, Validator, Tester, Deployment Engineer. Each derives all context from the Knowledge Base, Project Profile, and current Plan.
 - **Tool-independent adapters** - implemented today: Claude Code (headless) and a deterministic Mock for offline runs, tests, and fallback.
 
@@ -159,12 +159,19 @@ You type framework commands in the terminal. You never prompt the AI directly - 
 ai-sdlc status                   # every task and its state
 ai-sdlc report                   # metrics + timeline markdown
 Ctrl+C                           # safe-stop anytime, state stays consistent
-ai-sdlc continue                 # resume exactly where it stopped
+ai-sdlc develop                  # run again anytime - always continues from
+                                 #   current state; offers to retry blocked
+                                 #   tasks after you fix their causes
 ai-sdlc rollback T3              # revert exactly task T3 (confirmation-gated)
 ai-sdlc replan changed-req.md    # requirement changed mid-flight:
                                  #   diff plan, keep completed work, re-approve
 ai-sdlc push                     # publish the feature branch (confirmation-gated)
 ```
+
+There is exactly one execution verb. When tasks block, the framework tells
+you which and why, both at the end of the run and the next time you start
+one - and asks whether to retry them. You never memorize system state; the
+system presents its state with the next action attached.
 
 ## CLI Reference
 
@@ -172,8 +179,9 @@ ai-sdlc push                     # publish the feature branch (confirmation-gate
 ai-sdlc init                       # plant .ai-sdlc/ into the workspace
 ai-sdlc analyze <requirement-file> # requirement -> analysis + clarifications
 ai-sdlc plan                       # analysis -> implementation plan
-ai-sdlc develop [--parallel]       # execute the plan (approval gate first; alias: run)
-ai-sdlc continue                   # resume from current state
+ai-sdlc develop [--parallel] [--retry-blocked]
+                                   # execute the plan - safe to run anytime,
+                                   # always continues from current state (alias: run)
 ai-sdlc status                     # show task states
 ai-sdlc report                     # audit log + metrics -> markdown
 ai-sdlc rollback <task-id> [--yes] # revert one task's commit
@@ -259,7 +267,8 @@ Agents execute under defined autonomy boundaries; humans stay in control:
 - Feature-branch lifecycle: agents work on a branch recorded in the plan; main stays clean; pushing is asked every time, never automatic
 - Per-task local commits ([ai-sdlc:Tn]) as rollback save-points; `ai-sdlc rollback` reverts exactly one task
 - Dynamic re-planning: requirement changed mid-flight -> diff the plan, protect completed work, revise pending tasks, re-approve; a stale-analysis gate refuses to execute a plan whose analysis changed after approval
-- Safe-stop: interrupt at any point; state on disk stays consistent and resumable
+- Safe-stop: interrupt at any point; state on disk stays consistent and rerunning develop resumes it
+- Validation inside the retry loop: a policy-rejected output is a failed attempt whose reason feeds the next try; the agent self-corrects within the bounded budget, then blocks for the human
 - Audit-grade observability: append-only JSONL log of every agent call, gate decision, approval, retry, fallback, rollback, branch, and push
 - Reliability metrics: success rate, retry/rollback frequency, MTTR, end-to-end latency, and latency by stage
 

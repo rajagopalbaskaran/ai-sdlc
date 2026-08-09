@@ -147,14 +147,18 @@ def cmd_run(args) -> int:
     config = _load_config(ws)
     engine = Engine(ws, _build_engine_adapter(ws, config), config, echo=True)
     parallel = True if args.parallel else None
-    summary = engine.run(parallel=parallel)
+    summary = engine.run(parallel=parallel, retry_blocked=getattr(args, "retry_blocked", False))
     print(
         f"run {engine.run_id}: {summary.status} "
         f"(completed={summary.completed} blocked={summary.blocked} rolled_back={summary.rolled_back})"
     )
     print(f"audit: {engine.audit.path}")
     if summary.blocked:
-        print("hint: blocked tasks may mean the plan itself is stale - consider: ai-sdlc replan")
+        print("blocked tasks:")
+        for task_id, reason in engine.blocked_report():
+            print(f"  {task_id} - {reason or 'see audit log'}")
+        print("fix the causes, then rerun: ai-sdlc develop (it will offer to retry them)")
+        print("if the plan itself is wrong rather than the execution: ai-sdlc replan")
     return 0 if summary.status == "completed" else 1
 
 
@@ -290,7 +294,7 @@ def cmd_retry(args) -> int:
         choice=f"reset {task.id} to pending",
         reasons=["human confirmed the blocking cause was addressed"],
     )
-    print(f"task {task.id} reset to pending; resume with: ai-sdlc continue")
+    print(f"task {task.id} reset to pending; resume with: ai-sdlc develop")
     return 0
 
 
@@ -400,12 +404,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "develop",
         aliases=["run"],
         parents=[common],
-        help="execute the implementation plan (approval gate first; alias: run)",
+        help="execute the implementation plan - safe to run anytime, always continues from current state (alias: run)",
     )
     p_dev.add_argument("--parallel", action="store_true", help="run independent tasks concurrently")
-
-    p_cont = sub.add_parser("continue", parents=[common], help="resume execution from current state")
-    p_cont.add_argument("--parallel", action="store_true", help="run independent tasks concurrently")
+    p_dev.add_argument(
+        "--retry-blocked",
+        action="store_true",
+        help="re-authorize blocked tasks without prompting (for non-interactive use)",
+    )
 
     sub.add_parser("status", parents=[common], help="show task states")
     sub.add_parser("report", parents=[common], help="render audit log and metrics to markdown")
@@ -439,7 +445,6 @@ def main(argv: list[str] | None = None) -> int:
         "plan": cmd_plan,
         "develop": cmd_run,
         "run": cmd_run,
-        "continue": cmd_run,
         "status": cmd_status,
         "report": cmd_report,
         "rollback": cmd_rollback,
