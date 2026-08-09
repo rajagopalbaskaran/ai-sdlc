@@ -138,7 +138,7 @@ def cmd_plan(args) -> int:
         print("planner produced no task blocks; plan file unchanged (see audit log)")
     engine.audit.event("task_completed", task="PLAN")
     engine.audit.event("stage_completed", stage="plan")
-    print("review the plan, then run: ai-sdlc run (plan approval will be requested)")
+    print("review the plan, then run: ai-sdlc develop (plan approval will be requested)")
     return 0
 
 
@@ -261,7 +261,7 @@ def cmd_replan(args) -> int:
     approvals_path.write_text(yaml.safe_dump(approvals), encoding="utf-8")
 
     audit.event("replan_applied", tasks=len(diff.merged))
-    print(f"revised plan written to {ws.plan_path}; continue with: ai-sdlc run")
+    print(f"revised plan written to {ws.plan_path}; continue with: ai-sdlc develop")
     return 0
 
 
@@ -367,8 +367,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("plan", parents=[common], help="turn the analysis into an implementation plan")
 
-    p_run = sub.add_parser("run", parents=[common], help="execute the implementation plan")
-    p_run.add_argument("--parallel", action="store_true", help="run independent tasks concurrently")
+    p_dev = sub.add_parser(
+        "develop",
+        aliases=["run"],
+        parents=[common],
+        help="execute the implementation plan (approval gate first; alias: run)",
+    )
+    p_dev.add_argument("--parallel", action="store_true", help="run independent tasks concurrently")
 
     p_cont = sub.add_parser("continue", parents=[common], help="resume execution from current state")
     p_cont.add_argument("--parallel", action="store_true", help="run independent tasks concurrently")
@@ -400,6 +405,7 @@ def main(argv: list[str] | None = None) -> int:
         "init": cmd_init,
         "analyze": cmd_analyze,
         "plan": cmd_plan,
+        "develop": cmd_run,
         "run": cmd_run,
         "continue": cmd_run,
         "status": cmd_status,

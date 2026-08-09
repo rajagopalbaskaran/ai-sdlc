@@ -145,7 +145,7 @@ ai-sdlc analyze requirement.md   # agent writes plan/requirement-analysis.md
 ai-sdlc plan                     # agent appends tasks to implementation-plan.md
 #   -> YOU review the tasks and dependencies in your editor
 
-ai-sdlc run                      # asks: Approve the implementation plan? [a/r/m]
+ai-sdlc develop                  # asks: Approve the implementation plan? [a/r/m]
 #   -> agents execute task by task on a feature branch:
 #      retries, policy checks, per-task commits, audit logging
 #   -> at the end (if a git remote exists): Push branch? [a/r/m]
@@ -172,13 +172,14 @@ ai-sdlc push                     # publish the feature branch (confirmation-gate
 ai-sdlc init                       # plant .ai-sdlc/ into the workspace
 ai-sdlc analyze <requirement-file> # requirement -> analysis + clarifications
 ai-sdlc plan                       # analysis -> implementation plan
-ai-sdlc run [--parallel]           # execute the plan (approval gate first)
+ai-sdlc develop [--parallel]       # execute the plan (approval gate first; alias: run)
 ai-sdlc continue                   # resume from current state
 ai-sdlc status                     # show task states
 ai-sdlc report                     # audit log + metrics -> markdown
 ai-sdlc rollback <task-id> [--yes] # revert one task's commit
 ai-sdlc replan [req] [--proposal file] [--yes]  # absorb a requirement change
 ai-sdlc push [--yes]               # push the feature branch to origin
+ai-sdlc summarize                  # generate the engineering summary
 ```
 
 ## Architecture Overview

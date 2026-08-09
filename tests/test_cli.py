@@ -83,6 +83,13 @@ def test_warn_unexpected_changes_silent_when_clean(tmp_workspace, capsys):
     assert capsys.readouterr().err == ""
 
 
+def test_cli_develop_is_primary_and_run_is_alias(tmp_workspace, capsys):
+    _seed(tmp_workspace)
+    assert main(["develop", "--workspace", str(tmp_workspace)]) == 0
+    out = capsys.readouterr().out
+    assert "completed=1" in out
+
+
 def test_cli_status_empty_plan(tmp_workspace, capsys):
     main(["init", "--workspace", str(tmp_workspace)])
     assert main(["status", "--workspace", str(tmp_workspace)]) == 0
