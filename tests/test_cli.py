@@ -161,6 +161,94 @@ def test_plan_append_revokes_prior_approval(tmp_workspace, capsys, monkeypatch):
     assert "re-approval" in capsys.readouterr().out.lower()
 
 
+PLAN_PROPOSAL = (
+    "### T9 New fix task\n\n"
+    "```yaml\n"
+    "id: T9\n"
+    "status: pending\n"
+    "depends_on: []\n"
+    "persona: developer\n"
+    "```\n\n"
+    "Fix the thing.\n"
+)
+
+
+def _make_git(root):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "test"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.local"], cwd=root, check=True)
+    (root / "base.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=root, check=True)
+
+
+def _mock_planner(monkeypatch):
+    from ai_sdlc.adapters.base import AdapterResult
+    from ai_sdlc.adapters.mock import MockAdapter
+
+    adapter = MockAdapter(script={"PLAN": [AdapterResult(ok=True, output=PLAN_PROPOSAL)]})
+    monkeypatch.setattr(
+        "ai_sdlc.cli._build_engine_adapter", lambda ws, c, audit_event=None: adapter
+    )
+
+
+def test_analyze_records_requirement_in_plan_meta(tmp_workspace):
+    from ai_sdlc.state.plan import PlanDocument
+
+    state = _seed(tmp_workspace)
+    req = tmp_workspace / "req.md"
+    req.write_text("# Something\n\nDo it.\n", encoding="utf-8")
+    assert main(["analyze", str(req), "--workspace", str(tmp_workspace)]) == 0
+    doc = PlanDocument.load(state / "plan" / "implementation-plan.md")
+    assert doc.meta.get("requirement")
+
+
+def test_plan_commits_requirement_and_analysis_first(tmp_workspace, monkeypatch, capsys):
+    import subprocess
+
+    _seed(tmp_workspace)
+    _make_git(tmp_workspace)
+    req = tmp_workspace / "req.md"
+    req.write_text("# Something\n\nDo it.\n", encoding="utf-8")
+    assert main(["analyze", str(req), "--workspace", str(tmp_workspace)]) == 0
+    _mock_planner(monkeypatch)
+    assert main(["plan", "--workspace", str(tmp_workspace)]) == 0
+    log = subprocess.run(
+        ["git", "log", "--format=%s"], cwd=tmp_workspace, capture_output=True, text=True
+    ).stdout
+    assert "[ai-sdlc:requirement]" in log
+    assert "committed requirement/analysis snapshot" in capsys.readouterr().out
+
+
+def test_plan_without_git_warns_and_proceeds(tmp_workspace, monkeypatch, capsys):
+    _seed(tmp_workspace)
+    req = tmp_workspace / "req.md"
+    req.write_text("# Something\n", encoding="utf-8")
+    assert main(["analyze", str(req), "--workspace", str(tmp_workspace)]) == 0
+    _mock_planner(monkeypatch)
+    assert main(["plan", "--workspace", str(tmp_workspace)]) == 0
+    assert "not a git repository" in capsys.readouterr().out
+
+
+def test_plan_ask_mode_rejection_aborts(tmp_workspace, monkeypatch):
+    import yaml
+
+    state = _seed(tmp_workspace)
+    _make_git(tmp_workspace)
+    config_path = state / "config.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    config["commit_mode"] = "ask"
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    req = tmp_workspace / "req.md"
+    req.write_text("# Something\n", encoding="utf-8")
+    assert main(["analyze", str(req), "--workspace", str(tmp_workspace)]) == 0
+    _mock_planner(monkeypatch)
+    # non-interactive stdin -> the commit approval rejects -> planning aborts
+    assert main(["plan", "--workspace", str(tmp_workspace)]) == 1
+
+
 def test_cli_develop_is_primary_and_run_is_alias(tmp_workspace, capsys):
     _seed(tmp_workspace)
     assert main(["develop", "--workspace", str(tmp_workspace)]) == 0

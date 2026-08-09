@@ -15,7 +15,7 @@ from ai_sdlc.changes import diff, snapshot
 from ai_sdlc.governance.approvals import request_approval
 from ai_sdlc.governance.branching import current_branch, push_branch
 from ai_sdlc.governance.fallback import FallbackChain
-from ai_sdlc.governance.rollback import rollback_task
+from ai_sdlc.governance.rollback import commit_paths, paths_dirty, rollback_task
 from ai_sdlc.observability.audit import AuditLog
 from ai_sdlc.observability.metrics import compute_metrics
 from ai_sdlc.observability.report import render_report
@@ -64,6 +64,45 @@ def _revoke_plan_approval(ws: Workspace, audit, reason: str) -> bool:
         choice="re-approval required",
         reasons=[reason],
     )
+    return True
+
+
+def _commit_upstream(ws: Workspace, config: dict, audit) -> bool:
+    """Version the requirement and analysis before planning derives from
+    them - the plan's lineage must point at git-frozen artifacts. Returns
+    False only when a human explicitly declines in ask mode."""
+    if not (ws.root / ".git").is_dir():
+        print("note: workspace is not a git repository - requirement and analysis are not versioned")
+        return True
+    doc = PlanDocument.load(ws.plan_path)
+    paths: list[str] = []
+    if ws.analysis_path.is_file():
+        paths.append(str(ws.analysis_path.relative_to(ws.root)))
+    requirement = doc.meta.get("requirement")
+    if requirement and (ws.root / requirement).is_file():
+        paths.append(requirement)
+    if not paths or not paths_dirty(ws.root, paths):
+        return True
+    mode = config.get("commit_mode", "auto")
+    if mode == "off":
+        print("note: commit_mode off - planning against an uncommitted requirement/analysis")
+        return True
+    if mode == "ask":
+        decision = request_approval("Commit the requirement and analysis before planning?")
+        audit.event("approval", gate="upstream_commit", decision=decision)
+        if decision != "approve":
+            print(
+                "planning requires a versioned requirement/analysis; commit them "
+                "yourself or approve the snapshot",
+                file=sys.stderr,
+            )
+            return False
+    committed = commit_paths(
+        ws.root, paths, "requirement", "snapshot requirement and analysis for planning"
+    )
+    audit.event("commit", task="requirement-docs", committed=committed, files=paths)
+    if committed:
+        print(f"committed requirement/analysis snapshot ({', '.join(paths)})")
     return True
 
 
@@ -146,6 +185,16 @@ def cmd_analyze(args) -> int:
                 reasons=["a new requirement gets its own branch"],
             )
 
+    # remember which requirement file this analysis came from, so planning
+    # can version both together
+    doc = PlanDocument.load(ws.plan_path)
+    try:
+        requirement_rel = str(Path(args.requirement).resolve().relative_to(ws.root.resolve()))
+    except ValueError:
+        requirement_rel = str(args.requirement)
+    doc.set_meta(requirement=requirement_rel)
+    doc.save()
+
     print(f"analysis written to {out}")
     print("next: review the analysis (answer/adjust ambiguities), then run: ai-sdlc plan")
     return 0
@@ -159,6 +208,8 @@ def cmd_plan(args) -> int:
         print("error: no requirement-analysis.md; run: ai-sdlc analyze first", file=sys.stderr)
         return 1
     engine = Engine(ws, _build_engine_adapter(ws, config), config, echo=True)
+    if not _commit_upstream(ws, config, engine.audit):
+        return 1
     print(f"planning via {config.get('adapter', 'mock')} (may take a few minutes; Ctrl+C is safe)...")
     task = Task(
         id="PLAN",
@@ -257,6 +308,9 @@ def cmd_replan(args) -> int:
             return 1
         ws.analysis_path.write_text(result.output, encoding="utf-8")
         audit.event("task_completed", task="REANALYZE", artifact=str(ws.analysis_path))
+
+    if not _commit_upstream(ws, config, audit):
+        return 1
 
     # 2) obtain the proposed revised task set
     if args.proposal:

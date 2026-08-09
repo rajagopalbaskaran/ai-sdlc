@@ -34,6 +34,22 @@ def commit_task(workspace_root: Path, task_id: str, message: str) -> bool:
     return result.returncode == 0
 
 
+def paths_dirty(workspace_root: Path, paths: list[str]) -> bool:
+    """True when any of the given paths has uncommitted changes."""
+    result = _git(workspace_root, "status", "--porcelain", "--", *paths)
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def commit_paths(workspace_root: Path, paths: list[str], task_id: str, message: str) -> bool:
+    """Commit exactly the given paths with the [ai-sdlc:<id>] marker."""
+    if _git(workspace_root, "add", "--", *paths).returncode != 0:
+        return False
+    result = _git(
+        workspace_root, "commit", "-q", "-m", f"[ai-sdlc:{task_id}] {message}", "--", *paths
+    )
+    return result.returncode == 0
+
+
 def rollback_task(workspace_root: Path, task_id: str) -> bool:
     """Revert the commit created for task_id. Returns False if not found."""
     log = _git(workspace_root, "log", "--format=%H %s")
