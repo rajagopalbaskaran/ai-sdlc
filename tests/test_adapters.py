@@ -73,6 +73,39 @@ def test_text_personas_denied_edit_permission(monkeypatch, tmp_path):
         assert "acceptEdits" in captured["argv"], persona
 
 
+def test_claude_code_forces_utf8_decoding(monkeypatch, tmp_path):
+    captured = {}
+
+    class FakeProc:
+        returncode = 0
+        stdout = "analysis text"
+        stderr = ""
+
+    def fake_run(argv, **kwargs):
+        captured.update(kwargs)
+        return FakeProc()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    adapter = ClaudeCodeAdapter(workdir=tmp_path)
+    result = adapter.execute("requirement_analyst", "ctx", make_task())
+    assert result.ok
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "replace"
+
+
+def test_claude_code_none_stdout_is_never_none_output(monkeypatch, tmp_path):
+    class FakeProc:
+        returncode = 0
+        stdout = None
+        stderr = None
+
+    monkeypatch.setattr("subprocess.run", lambda argv, **kw: FakeProc())
+    adapter = ClaudeCodeAdapter(workdir=tmp_path)
+    result = adapter.execute("developer", "ctx", make_task())
+    assert result.output == ""
+    assert result.output is not None
+
+
 def test_persona_permission_config_override(monkeypatch, tmp_path):
     captured = {}
 

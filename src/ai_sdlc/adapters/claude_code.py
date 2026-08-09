@@ -72,6 +72,10 @@ class ClaudeCodeAdapter(Adapter):
                 argv,
                 capture_output=True,
                 text=True,
+                # Claude emits UTF-8; Windows would otherwise decode with the
+                # legacy codepage and crash on multi-byte characters
+                encoding="utf-8",
+                errors="replace",
                 timeout=self.timeout,
                 cwd=self.workdir,
             )
@@ -79,6 +83,8 @@ class ClaudeCodeAdapter(Adapter):
             return AdapterResult(ok=False, error=f"claude binary not found: {exc}")
         except subprocess.TimeoutExpired:
             return AdapterResult(ok=False, error=f"claude timed out after {self.timeout}s")
+        stdout = proc.stdout or ""
+        stderr = (proc.stderr or "").strip()
         if proc.returncode != 0:
-            return AdapterResult(ok=False, output=proc.stdout, error=proc.stderr.strip() or f"exit {proc.returncode}")
-        return AdapterResult(ok=True, output=proc.stdout)
+            return AdapterResult(ok=False, output=stdout, error=stderr or f"exit {proc.returncode}")
+        return AdapterResult(ok=True, output=stdout)
