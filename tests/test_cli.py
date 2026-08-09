@@ -109,12 +109,20 @@ def test_cli_retry_rejects_non_blocked_task(tmp_workspace):
 def test_analyze_revokes_prior_plan_approval(tmp_workspace):
     import yaml
 
+    from ai_sdlc.state.plan import PlanDocument
+
     state = _seed(tmp_workspace)  # writes approvals plan: true
+    plan_path = state / "plan" / "implementation-plan.md"
+    doc = PlanDocument.load(plan_path)
+    doc.set_meta(branch="feature/old-work")
+    doc.save()
     req = tmp_workspace / "new-requirement.md"
     req.write_text("# New requirement\n\nDo something else.\n", encoding="utf-8")
     assert main(["analyze", str(req), "--workspace", str(tmp_workspace)]) == 0
     approvals = yaml.safe_load((state / "approvals.yaml").read_text(encoding="utf-8"))
     assert approvals.get("plan") is False
+    # the old branch pin is released so the new requirement gets its own branch
+    assert not PlanDocument.load(plan_path).meta.get("branch")
 
 
 def test_cli_develop_is_primary_and_run_is_alias(tmp_workspace, capsys):

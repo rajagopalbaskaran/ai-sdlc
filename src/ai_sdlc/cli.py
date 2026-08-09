@@ -118,6 +118,18 @@ def cmd_analyze(args) -> int:
                 reasons=["a new requirement analysis replaced the one the plan was approved against"],
             )
             print("note: prior plan approval revoked - develop will ask for approval again")
+            # release the branch pin too: new requirement, new branch
+            doc = PlanDocument.load(ws.plan_path)
+            if doc.meta.get("branch"):
+                old_branch = doc.meta["branch"]
+                doc.set_meta(branch=None)
+                doc.save()
+                engine.audit.event(
+                    "decision",
+                    subject="branch_unpinned",
+                    choice=f"released {old_branch}",
+                    reasons=["a new requirement gets its own branch"],
+                )
 
     print(f"analysis written to {out}")
     return 0
