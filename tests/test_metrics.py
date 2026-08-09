@@ -54,6 +54,31 @@ def test_report_renders_markdown(tmp_path):
     assert "develop: 18.0s" in md
 
 
+def test_report_renders_decisions_section(tmp_path):
+    log = tmp_path / "audit-r3.jsonl"
+    write_log(
+        log,
+        [
+            {"ts": 1.0, "run_id": "r3", "type": "run_started"},
+            {
+                "ts": 2.0,
+                "run_id": "r3",
+                "type": "decision",
+                "subject": "branch_selection",
+                "choice": "feature/demo",
+                "reasons": ["default from workspace name"],
+            },
+            {"ts": 3.0, "run_id": "r3", "type": "approval", "gate": "plan", "decision": "approve"},
+            {"ts": 4.0, "run_id": "r3", "type": "run_completed"},
+        ],
+    )
+    md = render_report(log)
+    assert "## Decisions" in md
+    assert "branch_selection: feature/demo" in md
+    assert "default from workspace name" in md
+    assert "approval plan: approve" in md
+
+
 def test_metrics_without_stage_events(tmp_path):
     log = tmp_path / "audit-r2.jsonl"
     write_log(

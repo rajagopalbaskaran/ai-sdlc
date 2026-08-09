@@ -191,7 +191,12 @@ class Engine:
         for task in doc.tasks:
             if task.status == "in_progress":
                 self._set_status(doc, task.id, "pending")
-                self.audit.event("decision", kind="recovered_in_flight_task", task=task.id)
+                self.audit.event(
+                    "decision",
+                    subject="crash_recovery",
+                    choice=f"reset {task.id} to pending",
+                    reasons=["task was in flight when a previous run stopped"],
+                )
 
         approvals = self._load_approvals()
         self.audit.event("run_started", parallel=parallel)
@@ -203,6 +208,12 @@ class Engine:
         if approvals.get("plan") and stored_sha and current_sha and stored_sha != current_sha:
             reason = "stale analysis: requirement-analysis.md changed since plan approval - run: ai-sdlc replan"
             self.audit.event("gate", stage="develop", kind="entry", passed=False, reasons=[reason])
+            self.audit.event(
+                "decision",
+                subject="stale_analysis",
+                choice="halt run",
+                reasons=["analysis fingerprint no longer matches the approved plan"],
+            )
             self.audit.event("run_stopped", reason="stale analysis")
             print(reason)
             return self._summary(doc, "halted")
@@ -222,15 +233,19 @@ class Engine:
         # plan; main stays clean. No-op when the workspace has no git repo.
         branch: str | None = None
         if (self.ws.root / ".git").is_dir():
-            branch = (
-                doc.meta.get("branch")
-                or self.config.get("branch")
-                or f"feature/{self.ws.root.name}"
-            )
+            if doc.meta.get("branch"):
+                branch, source = doc.meta["branch"], "recorded in the plan"
+            elif self.config.get("branch"):
+                branch, source = self.config["branch"], "set in config.yaml"
+            else:
+                branch, source = f"feature/{self.ws.root.name}", "default from workspace name"
             if doc.meta.get("branch") != branch:
                 with self._lock:
                     doc.set_meta(branch=branch)
                     doc.save()
+            self.audit.event(
+                "decision", subject="branch_selection", choice=branch, reasons=[source]
+            )
             switched = checkout_branch(self.ws.root, branch)
             self.audit.event("branch", name=branch, ok=switched)
 

@@ -230,7 +230,9 @@ def cmd_replan(args) -> int:
     print(diff.summary())
     audit.event(
         "decision",
-        kind="replan_diff",
+        subject="replan_diff",
+        choice=diff.summary(),
+        reasons=["requirement/analysis changed while the plan was mid-execution"],
         keep=diff.keep,
         unchanged=diff.unchanged,
         revised=diff.revised,

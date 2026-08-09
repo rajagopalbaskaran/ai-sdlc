@@ -157,6 +157,9 @@ def test_run_works_on_feature_branch_and_records_it(tmp_workspace):
     main_log = _git(tmp_workspace, "log", "--format=%s", "main").stdout
     assert "[ai-sdlc:T1]" in feature_log
     assert "[ai-sdlc:T1]" not in main_log
+    # branch choice is recorded as a structured decision
+    audit_text = engine.audit.path.read_text(encoding="utf-8")
+    assert "branch_selection" in audit_text
 
 
 def test_push_gate_approved_pushes_to_remote(tmp_workspace, tmp_path):
@@ -216,7 +219,9 @@ def test_stale_analysis_halts_run(tmp_workspace):
     summary = engine.run(parallel=False)
     assert summary.status == "halted"
     assert summary.completed == 0
-    assert "stale" in engine.audit.path.read_text(encoding="utf-8")
+    audit_text = engine.audit.path.read_text(encoding="utf-8")
+    assert "stale" in audit_text
+    assert "stale_analysis" in audit_text  # structured decision record
 
 
 def test_plan_approval_records_analysis_sha(tmp_workspace):
