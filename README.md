@@ -224,6 +224,28 @@ flowchart TB
     ADAPTERS --> OUT
 ```
 
+## What Asks Permission and What Does Not
+
+Know exactly which actions prompt you and which run automatically:
+
+| Action | Prompts you? | Notes |
+|---|---|---|
+| Execute the implementation plan | YES - approve/reject/modify | Nothing runs without this; the approval persists so it is asked once per plan |
+| Branch creation | Recommends, you decide | Interactive runs ask: `Branch for this work [Enter = feature/<name>]` - press Enter for the recommendation or type your own. Unattended runs take the default silently. The choice is recorded in the plan and audit |
+| Per-task local commits | Depends on `commit_mode` | `auto` (default): commits happen automatically as rollback save-points - local only, nothing leaves your machine. `ask`: prompts before every commit. `off`: no per-task commits (rollback by task becomes unavailable) |
+| Push to a remote | YES - every time | Never automatic, never remembered; no remote configured means no push at all |
+| Deploy-ready sign-off | YES | Final quality gate when all tasks are green |
+| Rollback / replan | YES | Confirmation prompts (or explicit `--yes`) |
+
+Two design rules behind this table:
+
+1. Local and reversible actions (branch creation, local commits under `auto`)
+   do not interrupt you - prompting for zero-risk bookkeeping causes approval
+   fatigue, which erodes attention at the gates that matter.
+2. Anything that publishes or destroys (push, rollback) always asks, and
+   non-interactive sessions reject by default - the framework can never
+   approve on your behalf.
+
 ## Governance and Controlled Autonomy
 
 Agents execute under defined autonomy boundaries; humans stay in control:

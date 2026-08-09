@@ -9,6 +9,7 @@ resumes where this one stopped.
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 import uuid
@@ -239,6 +240,23 @@ class Engine:
                 branch, source = self.config["branch"], "set in config.yaml"
             else:
                 branch, source = f"feature/{self.ws.root.name}", "default from workspace name"
+                # interactive runs get a say: recommend the default, accept a
+                # custom name; unattended runs take the default silently
+                try:
+                    interactive = bool(sys.stdin and sys.stdin.isatty())
+                except (AttributeError, ValueError):
+                    interactive = False
+                if interactive:
+                    try:
+                        answer = self.input_fn(
+                            f"Branch for this work [Enter = {branch}]: "
+                        ).strip()
+                    except (EOFError, OSError):
+                        answer = ""
+                    if answer:
+                        branch, source = answer, "chosen by human"
+                    else:
+                        source = "recommended default accepted by human"
             if doc.meta.get("branch") != branch:
                 with self._lock:
                     doc.set_meta(branch=branch)

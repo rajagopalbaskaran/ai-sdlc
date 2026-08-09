@@ -162,6 +162,45 @@ def test_run_works_on_feature_branch_and_records_it(tmp_workspace):
     assert "branch_selection" in audit_text
 
 
+class FakeTty:
+    def isatty(self):
+        return True
+
+
+def test_interactive_branch_prompt_accepts_custom_name(tmp_workspace, monkeypatch):
+    import sys
+
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    _make_git_repo(tmp_workspace)
+    monkeypatch.setattr(sys, "stdin", FakeTty())
+
+    def answers(prompt):
+        if "Branch" in prompt:
+            return "feature/my-own-name"
+        return "a"
+
+    engine = Engine(ws, WritingAdapter(tmp_workspace), config={"commit_mode": "off"}, input_fn=answers)
+    assert engine.run(parallel=False).status == "completed"
+    assert PlanDocument.load(ws.plan_path).meta.get("branch") == "feature/my-own-name"
+
+
+def test_interactive_branch_prompt_empty_accepts_recommendation(tmp_workspace, monkeypatch):
+    import sys
+
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    _make_git_repo(tmp_workspace)
+    monkeypatch.setattr(sys, "stdin", FakeTty())
+
+    def answers(prompt):
+        if "Branch" in prompt:
+            return ""
+        return "a"
+
+    engine = Engine(ws, WritingAdapter(tmp_workspace), config={"commit_mode": "off"}, input_fn=answers)
+    assert engine.run(parallel=False).status == "completed"
+    assert PlanDocument.load(ws.plan_path).meta.get("branch") == "feature/demo-app"
+
+
 def test_push_gate_approved_pushes_to_remote(tmp_workspace, tmp_path):
     import subprocess
 
