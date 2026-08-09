@@ -19,6 +19,7 @@ from ai_sdlc.governance.rollback import rollback_task
 from ai_sdlc.observability.audit import AuditLog
 from ai_sdlc.observability.metrics import compute_metrics
 from ai_sdlc.observability.report import render_report
+from ai_sdlc.observability.summary import generate_summary
 from ai_sdlc.orchestrator.engine import Engine
 from ai_sdlc.orchestrator.replan import extract_header, merge, render_plan
 from ai_sdlc.state.plan import PlanDocument, Task
@@ -262,6 +263,15 @@ def cmd_replan(args) -> int:
     return 0
 
 
+def cmd_summarize(args) -> int:
+    ws = _require_workspace(args.workspace)
+    markdown = generate_summary(ws)
+    out = ws.state_dir / "engineering-summary.md"
+    out.write_text(markdown, encoding="utf-8")
+    print(f"engineering summary written to {out}")
+    return 0
+
+
 def cmd_push(args) -> int:
     ws = _require_workspace(args.workspace)
     doc = PlanDocument.load(ws.plan_path)
@@ -377,6 +387,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_push = sub.add_parser("push", parents=[common], help="push the plan's feature branch to origin (human-gated)")
     p_push.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+
+    sub.add_parser("summarize", parents=[common], help="generate the engineering summary from project state")
     return parser
 
 
@@ -393,6 +405,7 @@ def main(argv: list[str] | None = None) -> int:
         "rollback": cmd_rollback,
         "replan": cmd_replan,
         "push": cmd_push,
+        "summarize": cmd_summarize,
     }
     return handlers[args.command](args)
 
