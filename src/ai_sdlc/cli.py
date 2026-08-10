@@ -14,6 +14,7 @@ import yaml
 
 from ai_sdlc.adapters.base import build_adapter
 from ai_sdlc.changes import diff, snapshot
+from ai_sdlc.cli_session import cmd_branch
 from ai_sdlc.governance.approvals import request_approval
 from ai_sdlc.governance.branching import current_branch, has_remote, push_branch
 from ai_sdlc.governance.fallback import FallbackChain
@@ -765,6 +766,24 @@ def _build_parser() -> argparse.ArgumentParser:
     p_retry.add_argument("task_id", help="task id to make eligible again (e.g. T3)")
 
     sub.add_parser("summarize", parents=[common], help="generate the engineering summary from project state")
+
+    p_branch = sub.add_parser(
+        "branch",
+        parents=[common],
+        help="show the recommended feature branch, or check one out and pin it",
+    )
+    p_branch.add_argument(
+        "--suggest",
+        action="store_true",
+        help="report the recommendation without creating anything (default)",
+    )
+    p_branch.add_argument(
+        "--use",
+        default=None,
+        help="check out this branch (creating it if needed) and pin it in the plan",
+    )
+    p_branch.add_argument("--json", action="store_true", help="machine-readable output")
+
     return parser
 
 
@@ -785,6 +804,7 @@ def main(argv: list[str] | None = None) -> int:
         "push": cmd_push,
         "retry": cmd_retry,
         "summarize": cmd_summarize,
+        "branch": cmd_branch,
     }
     return handlers[args.command](args)
 

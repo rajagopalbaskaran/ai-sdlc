@@ -432,12 +432,11 @@ class Engine:
             else:
                 branch, source = recommend_branch(self.ws)
                 # interactive runs get a say: recommend the default, accept a
-                # custom name; unattended runs take the default silently
-                try:
-                    interactive = bool(sys.stdin and sys.stdin.isatty())
-                except (AttributeError, ValueError):
-                    interactive = False
-                if interactive:
+                # custom name. Non-interactive runs still take the default, but
+                # must never record it as a human decision - under a slash
+                # command stdin is never a tty, and a silent auto-pick logged as
+                # "accepted by human" would make the approval trail a fiction.
+                if self._interactive():
                     try:
                         answer = self.input_fn(
                             f"Branch for this work [Enter = {branch}]: "
@@ -448,6 +447,8 @@ class Engine:
                         branch, source = answer, "chosen by human"
                     else:
                         source = "recommended default accepted by human"
+                else:
+                    source = source + " (accepted automatically: no interactive stdin)"
             if doc.meta.get("branch") != branch:
                 with self._lock:
                     doc.set_meta(branch=branch)
