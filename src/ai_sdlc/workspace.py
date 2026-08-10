@@ -33,6 +33,10 @@ class Workspace:
     def analysis_path(self) -> Path:
         return self.state_dir / "plan" / "requirement-analysis.md"
 
+    @property
+    def session_path(self) -> Path:
+        return self.state_dir / "session.yaml"
+
     def analysis_sha(self) -> str | None:
         """Fingerprint of the requirement analysis; None when absent. Used
         to detect that upstream outputs changed after plan approval."""
