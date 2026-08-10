@@ -10,6 +10,9 @@ approval_gates:            # stages requiring human approval at their exit gate
   - deploy_ready
 claude_command: claude     # binary used by the claude-code adapter
 task_timeout_seconds: 600
+test_commands: []          # shell commands run by ai-sdlc test, e.g.
+                           #   - "cd backend && mvn test"
+                           #   - "cd frontend && npm test"
 # persona_permissions:     # optional override of file-edit rights per persona
 #   validator: edit        #   "edit" grants file edits, "text" denies them
 #   developer: text        #   defaults: analyst/planner/validator=text, rest=edit

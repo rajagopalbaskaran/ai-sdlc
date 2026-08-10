@@ -297,6 +297,84 @@ def test_push_without_remote_fails_before_asking(tmp_workspace, capsys):
     assert "Push branch" not in captured.out
 
 
+def _set_config(state, key, value):
+    import yaml
+
+    config_path = state / "config.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    config[key] = value
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+
+def test_cli_test_runs_commands_and_audits(tmp_workspace, capsys):
+    state = _seed(tmp_workspace)
+    _set_config(state, "test_commands", ["echo hello"])
+    assert main(["test", "--workspace", str(tmp_workspace)]) == 0
+    out = capsys.readouterr().out
+    assert "PASS" in out
+    logs = list((state / "runs").glob("audit-*.jsonl"))
+    assert any("test_command" in p.read_text(encoding="utf-8") for p in logs)
+
+
+def test_cli_test_failing_command_returns_nonzero(tmp_workspace, capsys):
+    state = _seed(tmp_workspace)
+    _set_config(state, "test_commands", ["exit 1"])
+    assert main(["test", "--workspace", str(tmp_workspace)]) == 1
+    assert "FAIL" in capsys.readouterr().out
+
+
+def test_cli_test_unconfigured_guides(tmp_workspace, capsys):
+    _seed(tmp_workspace)
+    assert main(["test", "--workspace", str(tmp_workspace)]) == 1
+    assert "test_commands" in capsys.readouterr().err
+
+
+def _mock_validator(monkeypatch, output):
+    from ai_sdlc.adapters.base import AdapterResult
+    from ai_sdlc.adapters.mock import MockAdapter
+
+    adapter = MockAdapter(script={"VALIDATE": [AdapterResult(ok=True, output=output)]})
+    monkeypatch.setattr(
+        "ai_sdlc.cli._build_engine_adapter", lambda ws, c, audit_event=None: adapter
+    )
+
+
+def test_cli_validate_writes_report_and_passes(tmp_workspace, monkeypatch, capsys):
+    state = _seed(tmp_workspace)
+    (state / "plan" / "requirement-analysis.md").write_text("# Analysis\n", encoding="utf-8")
+    _mock_validator(
+        monkeypatch,
+        "| Requirement | Verdict | Evidence |\n|---|---|---|\n| create link | MET | src/x.java |\n\nSummary: 1 met, 0 partial, 0 missing\n",
+    )
+    assert main(["validate", "--workspace", str(tmp_workspace)]) == 0
+    assert (state / "plan" / "validation-report.md").is_file()
+    assert "ai-sdlc push" in capsys.readouterr().out
+
+
+def test_cli_validate_flags_gaps(tmp_workspace, monkeypatch, capsys):
+    state = _seed(tmp_workspace)
+    (state / "plan" / "requirement-analysis.md").write_text("# Analysis\n", encoding="utf-8")
+    _mock_validator(
+        monkeypatch,
+        "| stats endpoint | MISSING | not implemented |\n\nSummary: 0 met, 0 partial, 1 missing\n",
+    )
+    assert main(["validate", "--workspace", str(tmp_workspace)]) == 1
+    assert "gaps" in capsys.readouterr().out.lower()
+
+
+def test_push_warns_without_validation_report(tmp_workspace, capsys, tmp_path):
+    import subprocess
+
+    _seed(tmp_workspace)
+    _make_git(tmp_workspace)
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    subprocess.run(["git", "remote", "add", "origin", str(bare)], cwd=tmp_workspace, check=True)
+    # non-interactive: the push approval rejects, but the warning appears first
+    assert main(["push", "--workspace", str(tmp_workspace)]) == 1
+    assert "no validation report" in capsys.readouterr().err
+
+
 def test_cli_status_empty_plan(tmp_workspace, capsys):
     main(["init", "--workspace", str(tmp_workspace)])
     assert main(["status", "--workspace", str(tmp_workspace)]) == 0

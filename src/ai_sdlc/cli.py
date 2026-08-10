@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import subprocess
 import sys
 import time
 import uuid
@@ -317,8 +319,8 @@ def cmd_run(args) -> int:
         print("if the plan itself is wrong rather than the execution: ai-sdlc replan")
     elif summary.status == "completed":
         print(
-            "next: verify the outputs, then: ai-sdlc report / ai-sdlc summarize; "
-            "publish with: ai-sdlc push; new requirement? start with: ai-sdlc analyze <file>"
+            "next: ai-sdlc test (run the suites), then: ai-sdlc validate "
+            "(requirement-to-code check); publish with: ai-sdlc push"
         )
     return 0 if summary.status == "completed" else 1
 
@@ -462,6 +464,139 @@ def cmd_retry(args) -> int:
     return 0
 
 
+def cmd_test(args) -> int:
+    """Execute the project's declared test commands - mechanical, no LLM.
+    Proves the code passes its own tests; validate proves it meets the
+    requirement. Both feed the release decision."""
+    ws = _require_workspace(args.workspace)
+    config = _load_config(ws)
+    commands = config.get("test_commands") or []
+    if not commands:
+        print("no test_commands configured in .ai-sdlc/config.yaml", file=sys.stderr)
+        print(
+            'example:\n  test_commands:\n    - "cd backend && mvn test"\n    - "cd frontend && npm test"',
+            file=sys.stderr,
+        )
+        return 1
+    audit = AuditLog(ws.runs_dir, time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
+    audit.event("stage_started", stage="test")
+    all_ok = True
+    for command in commands:
+        print(f"running: {command}")
+        started = time.time()
+        try:
+            proc = subprocess.run(
+                command,
+                shell=True,
+                cwd=ws.root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=config.get("test_timeout_seconds", 1800),
+            )
+            ok = proc.returncode == 0
+            tail = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()[-2000:]
+        except subprocess.TimeoutExpired:
+            ok, tail = False, "timed out"
+        seconds = round(time.time() - started)
+        audit.event("test_command", command=command, ok=ok, seconds=seconds, output_tail=tail)
+        print(f"  {'PASS' if ok else 'FAIL'} ({seconds}s)")
+        if not ok:
+            all_ok = False
+            print(tail[-1200:])
+    audit.event("stage_completed", stage="test")
+    audit.event(
+        "decision",
+        subject="test_stage",
+        choice="pass" if all_ok else "fail",
+        reasons=[f"{len(commands)} command(s) executed"],
+    )
+    if all_ok:
+        print("all test commands passed")
+        print("next: ai-sdlc validate (requirement-to-code check), then: ai-sdlc push")
+        return 0
+    print("test failures - fix and rerun: ai-sdlc test", file=sys.stderr)
+    return 1
+
+
+def cmd_validate(args) -> int:
+    """Requirement-to-code validation: the Validator agent reads the original
+    requirement and the actual code, and reports MET/PARTIAL/MISSING per
+    requirement item with evidence."""
+    ws = _require_workspace(args.workspace)
+    config = _load_config(ws)
+    doc = PlanDocument.load(ws.plan_path)
+    requirement_rel = doc.meta.get("requirement")
+    if requirement_rel and (ws.root / requirement_rel).is_file():
+        requirement_text = (ws.root / requirement_rel).read_text(encoding="utf-8")
+    elif ws.analysis_path.is_file():
+        requirement_text = ws.analysis_path.read_text(encoding="utf-8")
+    else:
+        print("error: no requirement or analysis found to validate against", file=sys.stderr)
+        return 1
+
+    # latest automated-test evidence from the audit history
+    test_evidence: list[str] = []
+    for log in sorted(ws.runs_dir.glob("audit-*.jsonl")):
+        for line in log.read_text(encoding="utf-8").splitlines():
+            if '"test_command"' in line:
+                event = json.loads(line)
+                test_evidence.append(
+                    f"- {event.get('command')}: {'PASS' if event.get('ok') else 'FAIL'}"
+                )
+
+    engine = Engine(ws, _build_engine_adapter(ws, config), config, echo=True)
+    body = (
+        "Validate the implemented code in this workspace against the ORIGINAL "
+        "requirement below. Produce a markdown validation report containing:\n"
+        "- a table: | Requirement item | Verdict | Evidence |\n"
+        "  where Verdict is exactly one of MET, PARTIAL, MISSING\n"
+        "- cover every requirement line; do not skip any\n"
+        "- cite actual file paths (and passing tests) as evidence\n"
+        "- end with a line: Summary: X met, Y partial, Z missing\n"
+        "Read the code; do not modify anything.\n\n"
+        "## Latest automated test results\n\n"
+        + ("\n".join(test_evidence[-20:]) or "- none recorded (consider: ai-sdlc test)")
+        + f"\n\n## Original requirement\n\n{requirement_text}"
+    )
+    task = Task(
+        id="VALIDATE",
+        title="Requirement-to-code validation",
+        status="pending",
+        persona="validator",
+        body=body,
+    )
+    print(f"validating via {config.get('adapter', 'mock')} (may take a few minutes; Ctrl+C is safe)...")
+    engine.audit.event("stage_started", stage="validate")
+    engine.audit.event("task_started", task="VALIDATE", persona="validator")
+    before = snapshot(ws.root)
+    result = engine.adapter.execute("validator", engine._context_for(task), task)
+    _warn_unexpected_changes(ws, engine.audit, "validate", before)
+    if not result.ok:
+        engine.audit.event("task_failed", task="VALIDATE", error=result.error or "unknown")
+        print(f"validation failed to run: {result.error}", file=sys.stderr)
+        return 1
+    report = ws.state_dir / "plan" / "validation-report.md"
+    report.write_text(result.output, encoding="utf-8")
+    engine.audit.event("task_completed", task="VALIDATE", artifact=str(report))
+    engine.audit.event("stage_completed", stage="validate")
+    _commit_snapshot(
+        ws,
+        config,
+        engine.audit,
+        [str(report.relative_to(ws.root))],
+        "validation",
+        "requirement-to-code validation report",
+    )
+    print(f"validation report written to {report}")
+    if "MISSING" in result.output or "PARTIAL" in result.output:
+        print("gaps found - review the report; plan-level gaps: ai-sdlc replan; execution fixes: ai-sdlc develop")
+        return 1
+    print("all requirements MET - next: ai-sdlc push")
+    return 0
+
+
 def cmd_summarize(args) -> int:
     ws = _require_workspace(args.workspace)
     markdown = generate_summary(ws)
@@ -478,6 +613,12 @@ def cmd_push(args) -> int:
         print("error: no git remote configured - nothing to push to", file=sys.stderr)
         print("add one first: git remote add origin <repository-url>", file=sys.stderr)
         return 1
+    # publishing without validation evidence is allowed but never silent
+    report = ws.state_dir / "plan" / "validation-report.md"
+    if not report.is_file():
+        print("warning: no validation report - consider: ai-sdlc validate", file=sys.stderr)
+    elif "MISSING" in report.read_text(encoding="utf-8"):
+        print("warning: the validation report contains MISSING items", file=sys.stderr)
     doc = PlanDocument.load(ws.plan_path)
     branch = doc.meta.get("branch") or current_branch(ws.root)
     if not branch:
@@ -582,6 +723,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help="re-authorize blocked tasks without prompting (for non-interactive use)",
     )
 
+    sub.add_parser("test", parents=[common], help="run the project's test commands (mechanical, no LLM)")
+    sub.add_parser("validate", parents=[common], help="agent checks the code against the original requirement")
     sub.add_parser("status", parents=[common], help="show task states")
     sub.add_parser("report", parents=[common], help="render audit log and metrics to markdown")
 
@@ -614,6 +757,8 @@ def main(argv: list[str] | None = None) -> int:
         "plan": cmd_plan,
         "develop": cmd_run,
         "run": cmd_run,
+        "test": cmd_test,
+        "validate": cmd_validate,
         "status": cmd_status,
         "report": cmd_report,
         "rollback": cmd_rollback,
