@@ -14,7 +14,14 @@ import yaml
 
 from ai_sdlc.adapters.base import build_adapter
 from ai_sdlc.changes import diff, snapshot
-from ai_sdlc.cli_session import cmd_approve, cmd_branch, cmd_remote
+from ai_sdlc.cli_session import (
+    cmd_approve,
+    cmd_branch,
+    cmd_next,
+    cmd_remote,
+    cmd_session,
+    cmd_task_report,
+)
 from ai_sdlc.governance.approvals import request_approval
 from ai_sdlc.governance.branching import current_branch, has_remote, push_branch
 from ai_sdlc.governance.fallback import FallbackChain
@@ -805,6 +812,34 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_approve.add_argument("--json", action="store_true", help="machine-readable output")
 
+    p_session = sub.add_parser(
+        "session",
+        parents=[common],
+        help="interactive (IDE) mode: start, inspect, or end a stepwise run",
+    )
+    p_session.add_argument("action", choices=["start", "status", "end"])
+    p_session.add_argument(
+        "--retry-blocked", action="store_true", help="reset blocked tasks to pending at start"
+    )
+    p_session.add_argument("--json", action="store_true", help="machine-readable output")
+
+    p_next = sub.add_parser(
+        "next", parents=[common], help="ask the orchestrator for the next task to execute"
+    )
+    p_next.add_argument("--json", action="store_true", help="machine-readable output")
+
+    p_task_report = sub.add_parser(
+        "report-task",
+        parents=[common],
+        help="report a task outcome; the result is independently verified",
+    )
+    p_task_report.add_argument("--task", required=True, help="task id being reported (e.g. T3)")
+    p_task_report.add_argument("--result", required=True, choices=["pass", "fail"])
+    p_task_report.add_argument(
+        "--error", default=None, help="failure detail fed back into the next attempt"
+    )
+    p_task_report.add_argument("--json", action="store_true", help="machine-readable output")
+
     return parser
 
 
@@ -828,6 +863,9 @@ def main(argv: list[str] | None = None) -> int:
         "branch": cmd_branch,
         "remote": cmd_remote,
         "approve": cmd_approve,
+        "session": cmd_session,
+        "next": cmd_next,
+        "report-task": cmd_task_report,
     }
     return handlers[args.command](args)
 

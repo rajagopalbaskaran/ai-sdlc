@@ -165,3 +165,102 @@ def cmd_approve(args) -> int:
         [f"gate '{args.gate}' {'revoked' if args.revoke else 'approved'}"],
     )
     return 0
+
+
+def _session_engine(ws: Workspace):
+    from ai_sdlc.cli import _load_config
+    from ai_sdlc.orchestrator.session import SessionEngine
+
+    return SessionEngine(ws, _load_config(ws))
+
+
+def cmd_session(args) -> int:
+    from ai_sdlc.state.session import SessionState
+
+    ws = _require_workspace(args.workspace)
+
+    if args.action == "start":
+        result = _session_engine(ws).start(retry_blocked=args.retry_blocked)
+        lines = (
+            [
+                f"session {result['run_id']} started on branch {result['branch'] or '(no git)'}",
+                "next: ai-sdlc next",
+            ]
+            if result["ok"]
+            else ["cannot start:"] + [f"  - {r}" for r in result["reasons"]]
+        )
+        _emit(result, args.json, lines)
+        return 0 if result["ok"] else 1
+
+    if args.action == "status":
+        state = SessionState.load(ws)
+        payload = {
+            "active": state is not None,
+            "run_id": state.run_id if state else None,
+            "branch": state.branch if state else None,
+            "active_task": state.active_task if state else None,
+            "attempts": state.attempts if state else {},
+        }
+        _emit(
+            payload,
+            args.json,
+            [
+                f"session {payload['run_id']}" if state else "no active session",
+                f"active task: {payload['active_task'] or '(none)'}"
+                if state
+                else "start one: ai-sdlc session start",
+            ],
+        )
+        return 0
+
+    result = _session_engine(ws).end()
+    _emit(
+        result,
+        args.json,
+        [
+            f"session ended: {result['status']} "
+            f"(completed={result['completed']} blocked={result['blocked']})"
+        ]
+        + [f"  - {r}" for r in result["reasons"]],
+    )
+    return 0 if result["status"] == "completed" else 1
+
+
+def cmd_next(args) -> int:
+    ws = _require_workspace(args.workspace)
+    result = _session_engine(ws).next_task()
+    if result["task"] is None:
+        _emit(result, args.json, [result["reason"] or "nothing to do"])
+        return 0
+    task = result["task"]
+    _emit(
+        result,
+        args.json,
+        [
+            f"{task['id']}: {task['title']}",
+            f"  persona={task['persona']} attempt={task['attempt']} "
+            f"retries_left={task['retries_left']}",
+            f"  briefing: {result['briefing_path']}",
+            "",
+            f"do the work, then: ai-sdlc report-task --task {task['id']} --result pass|fail",
+        ],
+    )
+    return 0
+
+
+def cmd_task_report(args) -> int:
+    ws = _require_workspace(args.workspace)
+    result = _session_engine(ws).report(
+        args.task, claimed_ok=(args.result == "pass"), error=args.error
+    )
+    _emit(
+        result,
+        args.json,
+        [
+            f"{result['task']}: {result['status']} "
+            f"(verified={result['verified']} files={len(result['files_changed'])} "
+            f"committed={result['committed']} retries_left={result['retries_left']})"
+        ]
+        + ([f"  reason: {result['reason']}"] if result["reason"] else []),
+    )
+    return 0 if result["status"] in ("completed", "pending") else 1

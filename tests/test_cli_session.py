@@ -103,3 +103,56 @@ def test_approve_revoke_clears_plan(tmp_workspace, capsys):
     assert json.loads(capsys.readouterr().out)["approved"] is False
     stored = yaml.safe_load((state / "approvals.yaml").read_text(encoding="utf-8"))
     assert stored["plan"] is False
+
+
+def test_session_start_next_report_end_cycle(tmp_workspace, capsys):
+    _git_repo(tmp_workspace)
+    state = _seed(tmp_workspace)
+    (state / "config.yaml").write_text("adapter: session\ncommit_mode: auto\n", encoding="utf-8")
+    main(["branch", "--use", "feature/demo", "--workspace", str(tmp_workspace)])
+    capsys.readouterr()
+
+    assert main(["session", "start", "--json", "--workspace", str(tmp_workspace)]) == 0
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+
+    assert main(["next", "--json", "--workspace", str(tmp_workspace)]) == 0
+    nxt = json.loads(capsys.readouterr().out)
+    assert nxt["task"]["id"] == "T1"
+
+    (tmp_workspace / "app.py").write_text("x = 1\n", encoding="utf-8")
+    assert main([
+        "report-task", "--task", "T1", "--result", "pass",
+        "--json", "--workspace", str(tmp_workspace),
+    ]) == 0
+    rep = json.loads(capsys.readouterr().out)
+    assert rep["status"] == "completed"
+
+    assert main(["next", "--json", "--workspace", str(tmp_workspace)]) == 0
+    assert json.loads(capsys.readouterr().out)["done"] is True
+
+    assert main(["session", "end", "--json", "--workspace", str(tmp_workspace)]) == 0
+    end = json.loads(capsys.readouterr().out)
+    assert end["status"] == "completed"
+    assert not (state / "session.yaml").exists()
+
+
+def test_session_start_without_pinned_branch_fails(tmp_workspace, capsys):
+    _git_repo(tmp_workspace)
+    _seed(tmp_workspace)
+    capsys.readouterr()
+
+    rc = main(["session", "start", "--json", "--workspace", str(tmp_workspace)])
+    assert rc == 1
+    data = json.loads(capsys.readouterr().out)
+    assert data["ok"] is False
+    assert any("branch" in r for r in data["reasons"])
+
+
+def test_session_status_reports_no_active_session(tmp_workspace, capsys):
+    _seed(tmp_workspace)
+    capsys.readouterr()
+
+    assert main(["session", "status", "--json", "--workspace", str(tmp_workspace)]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["active"] is False
+    assert data["run_id"] is None
