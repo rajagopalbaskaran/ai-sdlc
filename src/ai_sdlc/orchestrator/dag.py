@@ -10,7 +10,18 @@ class CycleError(Exception):
 
 
 def detect_cycles(tasks: list[Task]) -> None:
-    """Raise CycleError on cycles or references to unknown task ids."""
+    """Raise CycleError on duplicate ids, unknown dependencies, or cycles."""
+    seen_ids: set[str] = set()
+    duplicates: set[str] = set()
+    for task in tasks:
+        if task.id in seen_ids:
+            duplicates.add(task.id)
+        seen_ids.add(task.id)
+    if duplicates:
+        raise CycleError(
+            f"duplicate task id(s): {', '.join(sorted(duplicates))} - each task "
+            "needs a unique id; renumber the newer occurrence in the plan"
+        )
     ids = {t.id for t in tasks}
     for task in tasks:
         for dep in task.depends_on:

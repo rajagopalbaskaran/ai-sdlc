@@ -44,6 +44,11 @@ def test_unknown_dependency_raises():
         detect_cycles([make("T1", deps=["T99"])])
 
 
+def test_duplicate_ids_named_explicitly():
+    with pytest.raises(CycleError, match="duplicate task id.*T27"):
+        detect_cycles([make("T27"), make("T28"), make("T27")])
+
+
 def test_terminal_when_no_runnable_work():
     done = [make("T1", status="completed"), make("T2", status="blocked")]
     assert terminal(done)

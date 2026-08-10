@@ -22,6 +22,7 @@ from ai_sdlc.observability.audit import AuditLog
 from ai_sdlc.observability.metrics import compute_metrics
 from ai_sdlc.observability.report import render_report
 from ai_sdlc.observability.summary import generate_summary
+from ai_sdlc.orchestrator.dag import CycleError
 from ai_sdlc.orchestrator.engine import Engine
 from ai_sdlc.orchestrator.replan import extract_header, merge, render_plan
 from ai_sdlc.state.plan import PlanDocument, Task
@@ -305,7 +306,12 @@ def cmd_run(args) -> int:
     config = _load_config(ws)
     engine = Engine(ws, _build_engine_adapter(ws, config), config, echo=True)
     parallel = True if args.parallel else None
-    summary = engine.run(parallel=parallel, retry_blocked=getattr(args, "retry_blocked", False))
+    try:
+        summary = engine.run(parallel=parallel, retry_blocked=getattr(args, "retry_blocked", False))
+    except CycleError as exc:
+        print(f"error: the implementation plan is invalid - {exc}", file=sys.stderr)
+        print(f"fix the plan file, then rerun: {ws.plan_path}", file=sys.stderr)
+        return 1
     print(
         f"run {engine.run_id}: {summary.status} "
         f"(completed={summary.completed} blocked={summary.blocked} rolled_back={summary.rolled_back})"
