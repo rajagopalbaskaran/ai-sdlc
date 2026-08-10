@@ -62,7 +62,10 @@ class ClaudeCodeAdapter(Adapter):
             task_title=task.title,
             task_body=task.body,
         )
-        argv = [self.command, "-p", prompt, "--output-format", "text"]
+        # the prompt goes through stdin, never argv: Windows caps a process
+        # command line at ~32K characters, and prompts with a knowledge base
+        # plus a large plan exceed that
+        argv = [self.command, "-p", "--output-format", "text"]
         if self._allows_edits(persona):
             # file edits inside the workspace auto-approved for personas that
             # legitimately write code and docs (developer, tester, deployment)
@@ -70,6 +73,7 @@ class ClaudeCodeAdapter(Adapter):
         try:
             proc = subprocess.run(
                 argv,
+                input=prompt,
                 capture_output=True,
                 text=True,
                 # Claude emits UTF-8; Windows would otherwise decode with the

@@ -55,6 +55,22 @@ def test_claude_code_argv_and_missing_binary(monkeypatch, tmp_path):
     assert result.error is not None
 
 
+def test_claude_code_prompt_goes_through_stdin_not_argv(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        captured["input"] = kwargs.get("input")
+        raise FileNotFoundError("claude not found")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    adapter = ClaudeCodeAdapter(workdir=tmp_path)
+    adapter.execute("developer", "a very long context " * 5000, make_task())
+    # prompt must never ride the command line (Windows ~32K argv limit)
+    assert all(len(part) < 1000 for part in captured["argv"])
+    assert "a very long context" in captured["input"]
+
+
 def test_text_personas_denied_edit_permission(monkeypatch, tmp_path):
     captured = {}
 
