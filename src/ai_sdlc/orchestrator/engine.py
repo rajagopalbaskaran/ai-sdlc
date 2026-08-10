@@ -29,7 +29,12 @@ from ai_sdlc.governance.approvals import request_approval
 from ai_sdlc.governance.branching import checkout_branch, has_remote, push_branch
 from ai_sdlc.governance.policy import check_policies
 from ai_sdlc.governance.retry import RetryPolicy
-from ai_sdlc.governance.rollback import commit_paths, commit_task, paths_dirty
+from ai_sdlc.governance.rollback import (
+    commit_paths,
+    commit_task,
+    dirty_app_paths,
+    paths_dirty,
+)
 from ai_sdlc.observability.audit import AuditLog
 from ai_sdlc.orchestrator.dag import detect_cycles, eligible_tasks, terminal
 from ai_sdlc.orchestrator.gates import GateContext, entry_gate, exit_gate
@@ -208,6 +213,7 @@ class Engine:
 
     def _maybe_commit(self, task: Task, files_changed: list[str]) -> None:
         """Local per-task save-point in the TARGET workspace. Never pushes.
+        Stages exactly the task's own files so leftovers cannot be absorbed.
         commit_mode: auto (default) | ask (human per commit) | off."""
         mode = self.config.get("commit_mode", "auto")
         if mode == "off" or not files_changed:
@@ -215,15 +221,42 @@ class Engine:
         if not (self.ws.root / ".git").is_dir():
             return
         if mode == "ask":
-            decision = request_approval(
-                f"Commit changes for task {task.id}?", input_fn=self.input_fn
-            )
+            try:
+                decision = request_approval(
+                    f"Commit changes for task {task.id}?", input_fn=self.input_fn
+                )
+            except KeyboardInterrupt:
+                # interrupt at the prompt = skip this commit, then safe-stop
+                self.audit.event("approval", gate=f"commit:{task.id}", decision="interrupted")
+                raise
             self.audit.event("approval", gate=f"commit:{task.id}", decision=decision)
             if decision != "approve":
                 return
         with self._lock:
-            committed = commit_task(self.ws.root, task.id, task.title)
+            committed = commit_task(self.ws.root, task.id, task.title, paths=files_changed)
         self.audit.event("commit", task=task.id, committed=committed)
+
+    def _recover_leftovers(self) -> None:
+        """Uncommitted application changes at run start (e.g. a task whose
+        commit prompt was interrupted last run) get their own attributed
+        commit instead of silently riding along with the next task."""
+        mode = self.config.get("commit_mode", "auto")
+        if mode == "off" or not (self.ws.root / ".git").is_dir():
+            return
+        leftovers = dirty_app_paths(self.ws.root)
+        if not leftovers:
+            return
+        if mode == "ask":
+            print(f"{len(leftovers)} uncommitted file(s) from a previous run: {', '.join(leftovers[:5])}")
+            decision = request_approval("Commit them as recovered work?", input_fn=self.input_fn)
+            self.audit.event("approval", gate="recovered_commit", decision=decision)
+            if decision != "approve":
+                return
+        committed = commit_paths(
+            self.ws.root, leftovers, "recovered",
+            "uncommitted changes from a previous interrupted run",
+        )
+        self.audit.event("commit", task="recovered", committed=committed, files=leftovers)
 
     # --- blocked-task guidance ---
 
@@ -298,9 +331,14 @@ class Engine:
         if not paths or not paths_dirty(self.ws.root, paths):
             return
         if mode == "ask":
-            decision = request_approval(
-                f"Commit the run record ({self.run_id})?", input_fn=self.input_fn
-            )
+            try:
+                decision = request_approval(
+                    f"Commit the run record ({self.run_id})?", input_fn=self.input_fn
+                )
+            except KeyboardInterrupt:
+                # never crash on an interrupt during shutdown bookkeeping
+                self.audit.event("approval", gate="run_record", decision="interrupted")
+                return
             self.audit.event("approval", gate="run_record", decision=decision)
             if decision != "approve":
                 return
@@ -419,6 +457,7 @@ class Engine:
             )
             switched = checkout_branch(self.ws.root, branch)
             self.audit.event("branch", name=branch, ok=switched)
+            self._recover_leftovers()
 
         self.audit.event("stage_started", stage="develop")
         try:

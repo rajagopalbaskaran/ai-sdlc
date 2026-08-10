@@ -20,18 +20,41 @@ def _git(workspace_root: Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
-def commit_task(workspace_root: Path, task_id: str, message: str) -> bool:
-    """Stage the app changes (framework state excluded) and commit with the
-    task marker. Returns False when there is nothing to commit or git is
-    unavailable."""
-    if _git(workspace_root, "add", "-A").returncode != 0:
-        return False
-    # framework state is not part of the task's code change
-    _git(workspace_root, "reset", "-q", "--", ".ai-sdlc")
+def commit_task(
+    workspace_root: Path, task_id: str, message: str, paths: list[str] | None = None
+) -> bool:
+    """Commit the task's changes with the task marker. When paths are given,
+    stage EXACTLY those files - so a task commit can never absorb unrelated
+    or leftover changes. Returns False when there is nothing to commit or
+    git is unavailable."""
+    if paths:
+        if _git(workspace_root, "add", "--", *paths).returncode != 0:
+            return False
+    else:
+        if _git(workspace_root, "add", "-A").returncode != 0:
+            return False
+        # framework state is not part of the task's code change
+        _git(workspace_root, "reset", "-q", "--", ".ai-sdlc")
     result = _git(
         workspace_root, "commit", "-q", "-m", f"[ai-sdlc:{task_id}] {message}"
     )
     return result.returncode == 0
+
+
+def dirty_app_paths(workspace_root: Path, exclude_prefix: str = ".ai-sdlc") -> list[str]:
+    """Uncommitted application paths (framework state excluded) - e.g.
+    leftovers from an interrupted run."""
+    result = _git(workspace_root, "status", "--porcelain")
+    if result.returncode != 0:
+        return []
+    paths = []
+    for line in result.stdout.splitlines():
+        path = line[3:].strip().strip('"')
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        if path and not path.startswith(exclude_prefix):
+            paths.append(path)
+    return sorted(paths)
 
 
 def paths_dirty(workspace_root: Path, paths: list[str]) -> bool:

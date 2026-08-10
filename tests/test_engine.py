@@ -361,6 +361,46 @@ def test_interactive_branch_prompt_empty_accepts_recommendation(tmp_workspace, m
     assert PlanDocument.load(ws.plan_path).meta.get("branch") == "feature/demo-app"
 
 
+def test_interrupt_at_commit_prompt_safe_stops_cleanly(tmp_workspace):
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    _make_git_repo(tmp_workspace)
+
+    def answers(prompt):
+        if "Commit changes for task" in prompt:
+            raise KeyboardInterrupt
+        return "a"
+
+    engine = Engine(
+        ws, WritingAdapter(tmp_workspace), config={"commit_mode": "ask"}, input_fn=answers
+    )
+    summary = engine.run(parallel=False)  # must not raise
+    assert summary.status == "stopped"
+    # the work survived even though its commit was interrupted
+    assert PlanDocument.load(ws.plan_path).get("T1").status == "completed"
+    assert "[ai-sdlc:T1]" not in _git(tmp_workspace, "log", "--format=%s").stdout
+
+
+def test_task_commits_stage_only_their_own_files(tmp_workspace):
+    ws = seed(tmp_workspace, plan_text=PLAN_ONE)
+    _make_git_repo(tmp_workspace)
+    # a stray uncommitted change (e.g. leftover from an interrupted run)
+    (tmp_workspace / "stray.txt").write_text("orphaned work\n", encoding="utf-8")
+    engine = Engine(
+        ws, WritingAdapter(tmp_workspace), config={"commit_mode": "auto"}, input_fn=approve_all
+    )
+    assert engine.run(parallel=False).status == "completed"
+    log = _git(tmp_workspace, "log", "--format=%H %s").stdout
+    # the stray file was recovered in its own attributed commit at run start
+    assert "[ai-sdlc:recovered]" in log
+    recovered_sha = next(l.split()[0] for l in log.splitlines() if "[ai-sdlc:recovered]" in l)
+    assert "stray.txt" in _git(tmp_workspace, "show", "--name-only", "--format=", recovered_sha).stdout
+    # and the task commit contains ONLY the task's own files
+    task_sha = next(l.split()[0] for l in log.splitlines() if "[ai-sdlc:T1]" in l)
+    shown = _git(tmp_workspace, "show", "--name-only", "--format=", task_sha).stdout
+    assert "src_T1.py" in shown
+    assert "stray.txt" not in shown
+
+
 def test_run_record_commits_state_at_run_end(tmp_workspace):
     # plan NOT pre-approved: the approval granted during the run makes
     # approvals.yaml part of the run record
