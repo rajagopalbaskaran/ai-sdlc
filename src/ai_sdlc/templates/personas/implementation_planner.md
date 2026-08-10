@@ -34,6 +34,9 @@ Each task:
   plan as the code it describes.
 
 ## Rules
+- Task ids MUST be unique across the whole plan, including tasks that
+  already exist from earlier requirements: find the highest existing id
+  and continue numbering after it. Never reuse an existing id.
 - Every task must be independently executable and verifiable.
 - Dependencies must form a DAG (no cycles).
 - Prefer many small tasks over few large ones.
