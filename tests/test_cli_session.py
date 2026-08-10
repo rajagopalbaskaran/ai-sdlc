@@ -70,3 +70,36 @@ def test_branch_use_creates_and_pins(tmp_workspace, capsys):
 
     doc = PlanDocument.load(Workspace(tmp_workspace).plan_path)
     assert doc.meta["branch"] == "fix/demo"
+
+
+def test_approve_plan_records_analysis_fingerprint(tmp_workspace, capsys):
+    import yaml
+
+    state = _seed(tmp_workspace)
+    (state / "approvals.yaml").write_text("plan: false\n", encoding="utf-8")
+    (state / "plan" / "requirement-analysis.md").write_text("# Analysis\n", encoding="utf-8")
+    capsys.readouterr()
+
+    rc = main(["approve", "--gate", "plan", "--json", "--workspace", str(tmp_workspace)])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["approved"] is True
+    assert data["analysis_sha"]
+
+    stored = yaml.safe_load((state / "approvals.yaml").read_text(encoding="utf-8"))
+    assert stored["plan"] is True
+    assert stored["analysis_sha"] == data["analysis_sha"]
+
+
+def test_approve_revoke_clears_plan(tmp_workspace, capsys):
+    import yaml
+
+    state = _seed(tmp_workspace)
+    main(["approve", "--gate", "plan", "--workspace", str(tmp_workspace)])
+    capsys.readouterr()
+
+    rc = main(["approve", "--gate", "plan", "--revoke", "--json", "--workspace", str(tmp_workspace)])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["approved"] is False
+    stored = yaml.safe_load((state / "approvals.yaml").read_text(encoding="utf-8"))
+    assert stored["plan"] is False

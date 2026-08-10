@@ -123,3 +123,45 @@ def cmd_remote(args) -> int:
         return 1
     _emit({"origin": args.set, "changed": True}, args.json, [f"origin set to {args.set}"])
     return 0
+
+
+def cmd_approve(args) -> int:
+    """Record a human approval made in the IDE chat rather than at a stdin
+    prompt. request_approval treats EOF as reject, and under a slash command
+    stdin is never a tty - so without this every gate auto-rejects forever.
+    The decision still comes from a human; only the channel differs, and the
+    audit event records which channel it was."""
+    import yaml
+
+    ws = _require_workspace(args.workspace)
+    path = ws.state_dir / "approvals.yaml"
+    approvals = {}
+    if path.is_file():
+        approvals = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+    audit = _new_audit(ws)
+    if args.revoke:
+        approvals[args.gate] = False
+        if args.gate == "plan":
+            # downstream sign-offs derived from the old plan fall with it
+            approvals.pop("analysis_sha", None)
+            approvals.pop("deploy_ready", None)
+        sha = None
+    else:
+        approvals[args.gate] = True
+        sha = ws.analysis_sha() if args.gate == "plan" else None
+        if sha:
+            approvals["analysis_sha"] = sha
+    path.write_text(yaml.safe_dump(approvals), encoding="utf-8")
+    audit.event(
+        "approval",
+        gate=args.gate,
+        decision="reject" if args.revoke else "approve",
+        channel="ide_session",
+    )
+    _emit(
+        {"gate": args.gate, "approved": not args.revoke, "analysis_sha": sha},
+        args.json,
+        [f"gate '{args.gate}' {'revoked' if args.revoke else 'approved'}"],
+    )
+    return 0

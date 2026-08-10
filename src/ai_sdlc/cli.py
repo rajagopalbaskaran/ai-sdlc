@@ -14,7 +14,7 @@ import yaml
 
 from ai_sdlc.adapters.base import build_adapter
 from ai_sdlc.changes import diff, snapshot
-from ai_sdlc.cli_session import cmd_branch, cmd_remote
+from ai_sdlc.cli_session import cmd_approve, cmd_branch, cmd_remote
 from ai_sdlc.governance.approvals import request_approval
 from ai_sdlc.governance.branching import current_branch, has_remote, push_branch
 from ai_sdlc.governance.fallback import FallbackChain
@@ -792,6 +792,19 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_remote.add_argument("--json", action="store_true", help="machine-readable output")
 
+    p_approve = sub.add_parser(
+        "approve",
+        parents=[common],
+        help="record a human approval taken in the IDE chat (no stdin prompt)",
+    )
+    p_approve.add_argument(
+        "--gate", required=True, choices=["plan", "deploy_ready"], help="gate being decided"
+    )
+    p_approve.add_argument(
+        "--revoke", action="store_true", help="withdraw the approval instead of granting it"
+    )
+    p_approve.add_argument("--json", action="store_true", help="machine-readable output")
+
     return parser
 
 
@@ -814,6 +827,7 @@ def main(argv: list[str] | None = None) -> int:
         "summarize": cmd_summarize,
         "branch": cmd_branch,
         "remote": cmd_remote,
+        "approve": cmd_approve,
     }
     return handlers[args.command](args)
 
