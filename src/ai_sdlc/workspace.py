@@ -9,6 +9,7 @@ from pathlib import Path
 
 STATE_DIR_NAME = ".ai-sdlc"
 SUBDIRS = ("knowledge-base", "plan", "personas", "runs")
+COMMAND_FILE = "ai-sdlc.md"
 
 
 class Workspace:
@@ -43,6 +44,25 @@ class Workspace:
         if not self.analysis_path.is_file():
             return None
         return hashlib.sha256(self.analysis_path.read_bytes()).hexdigest()
+
+    @property
+    def commands_dir(self) -> Path:
+        return self.root / ".claude" / "commands"
+
+    def install_commands(self, force: bool = False) -> Path | None:
+        """Install the /ai-sdlc slash command into the target project.
+
+        One file parsing $ARGUMENTS, so the invocation is `/ai-sdlc develop`
+        with a space; a directory of files would give `/ai-sdlc:develop`.
+        Returns the path written, or None when a file already exists and force
+        is False - a customized command is never clobbered."""
+        target = self.commands_dir / COMMAND_FILE
+        if target.exists() and not force:
+            return None
+        self.commands_dir.mkdir(parents=True, exist_ok=True)
+        source = resources.files("ai_sdlc") / "templates" / "commands" / COMMAND_FILE
+        shutil.copy(str(source), target)
+        return target
 
     @classmethod
     def init(cls, root: Path) -> "Workspace":

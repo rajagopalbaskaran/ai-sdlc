@@ -10,6 +10,10 @@ approval_gates:            # stages requiring human approval at their exit gate
   - deploy_ready
 claude_command: claude     # binary used by the claude-code adapter
 task_timeout_seconds: 600
+task_verify_command: ""    # per-task proof, re-run by ai-sdlc report-task in session
+                           # mode; a session's own "it passed" claim is never trusted
+                           # on its own, e.g.
+                           #   task_verify_command: "cd backend && mvn -q compile"
 test_commands: []          # shell commands run by ai-sdlc test, e.g.
                            #   - "cd backend && mvn test"
                            #   - "cd frontend && npm test"

@@ -188,7 +188,20 @@ def cmd_init(args) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(f"initialized {ws.state_dir}")
+    installed = ws.install_commands()
+    if installed:
+        print(f"installed slash command {installed} - use /ai-sdlc in Claude Code")
     print("next: fill in project-profile.md and knowledge-base/, then run: ai-sdlc analyze <requirement-file>")
+    return 0
+
+
+def cmd_install_commands(args) -> int:
+    ws = _require_workspace(args.workspace)
+    installed = ws.install_commands(force=args.force)
+    if installed:
+        print(f"installed {installed}")
+    else:
+        print(f"{ws.commands_dir / 'ai-sdlc.md'} already exists; use --force to overwrite")
     return 0
 
 
@@ -908,6 +921,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_task_report.add_argument("--json", action="store_true", help="machine-readable output")
 
+    p_cmds = sub.add_parser(
+        "install-commands",
+        parents=[common],
+        help="install the /ai-sdlc slash command into .claude/commands",
+    )
+    p_cmds.add_argument(
+        "--force", action="store_true", help="overwrite an existing command file"
+    )
+
     return parser
 
 
@@ -934,6 +956,7 @@ def main(argv: list[str] | None = None) -> int:
         "session": cmd_session,
         "next": cmd_next,
         "report-task": cmd_task_report,
+        "install-commands": cmd_install_commands,
     }
     return handlers[args.command](args)
 

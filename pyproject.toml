@@ -20,4 +20,9 @@ ai-sdlc = "ai_sdlc.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-ai_sdlc = ["templates/*.yaml", "templates/*.md", "templates/personas/*.md"]
+ai_sdlc = [
+    "templates/*.yaml",
+    "templates/*.md",
+    "templates/personas/*.md",
+    "templates/commands/*.md",
+]
