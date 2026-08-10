@@ -61,3 +61,23 @@ def test_push_without_remote_fails_cleanly(repo):
     ok, message = push_branch(repo, "main")
     assert not ok
     assert message
+
+
+def test_set_remote_adds_then_updates(tmp_path):
+    import subprocess
+
+    from ai_sdlc.governance.branching import has_remote, remote_url, set_remote
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+
+    assert remote_url(root) is None
+    assert has_remote(root) is False
+
+    assert set_remote(root, "https://example.com/a.git") is True
+    assert remote_url(root) == "https://example.com/a.git"
+    assert has_remote(root) is True
+
+    assert set_remote(root, "https://example.com/b.git") is True
+    assert remote_url(root) == "https://example.com/b.git"

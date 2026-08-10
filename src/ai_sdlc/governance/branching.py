@@ -34,6 +34,23 @@ def has_remote(root: Path) -> bool:
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
+def remote_url(root: Path, name: str = "origin") -> str | None:
+    result = _git(root, "remote", "get-url", name)
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def set_remote(root: Path, url: str, name: str = "origin") -> bool:
+    """Point `name` at `url`, adding the remote when it does not exist yet.
+
+    Projects the framework generates start with no origin at all, so without
+    this there is nothing for push_branch to publish to."""
+    if remote_url(root, name) is None:
+        return _git(root, "remote", "add", name, url).returncode == 0
+    return _git(root, "remote", "set-url", name, url).returncode == 0
+
+
 def push_branch(root: Path, name: str) -> tuple[bool, str]:
     """Push the branch to origin. Returns (ok, message)."""
     result = _git(root, "push", "-u", "origin", name)

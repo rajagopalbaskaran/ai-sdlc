@@ -89,3 +89,37 @@ def cmd_branch(args) -> int:
     payload.update({"pinned": args.use, "current": current_branch(ws.root), "created": True})
     _emit(payload, args.json, [f"branch {args.use} checked out and pinned in the plan"])
     return 0
+
+
+def cmd_remote(args) -> int:
+    from ai_sdlc.governance.branching import remote_url, set_remote
+
+    ws = _require_workspace(args.workspace)
+    if not (ws.root / ".git").is_dir():
+        print("error: workspace is not a git repository", file=sys.stderr)
+        return 1
+    if not args.set:
+        url = remote_url(ws.root)
+        _emit(
+            {"origin": url, "changed": False},
+            args.json,
+            [
+                f"origin: {url}" if url else "origin: (none configured)",
+                "" if url else "set one with: ai-sdlc remote --set <repository-url>",
+            ],
+        )
+        return 0
+    audit = _new_audit(ws)
+    ok = set_remote(ws.root, args.set)
+    audit.event(
+        "decision",
+        subject="remote_set",
+        choice=args.set,
+        reasons=["human supplied the remote url"],
+    )
+    audit.event("remote", url=args.set, ok=ok)
+    if not ok:
+        print(f"error: could not set origin to {args.set}", file=sys.stderr)
+        return 1
+    _emit({"origin": args.set, "changed": True}, args.json, [f"origin set to {args.set}"])
+    return 0

@@ -14,7 +14,7 @@ import yaml
 
 from ai_sdlc.adapters.base import build_adapter
 from ai_sdlc.changes import diff, snapshot
-from ai_sdlc.cli_session import cmd_branch
+from ai_sdlc.cli_session import cmd_branch, cmd_remote
 from ai_sdlc.governance.approvals import request_approval
 from ai_sdlc.governance.branching import current_branch, has_remote, push_branch
 from ai_sdlc.governance.fallback import FallbackChain
@@ -784,6 +784,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_branch.add_argument("--json", action="store_true", help="machine-readable output")
 
+    p_remote = sub.add_parser(
+        "remote", parents=[common], help="show or set the git remote used by ai-sdlc push"
+    )
+    p_remote.add_argument(
+        "--set", default=None, metavar="URL", help="set origin to this repository url"
+    )
+    p_remote.add_argument("--json", action="store_true", help="machine-readable output")
+
     return parser
 
 
@@ -805,6 +813,7 @@ def main(argv: list[str] | None = None) -> int:
         "retry": cmd_retry,
         "summarize": cmd_summarize,
         "branch": cmd_branch,
+        "remote": cmd_remote,
     }
     return handlers[args.command](args)
 
