@@ -13,7 +13,7 @@ import yaml
 from ai_sdlc.adapters.base import build_adapter
 from ai_sdlc.changes import diff, snapshot
 from ai_sdlc.governance.approvals import request_approval
-from ai_sdlc.governance.branching import current_branch, push_branch
+from ai_sdlc.governance.branching import current_branch, has_remote, push_branch
 from ai_sdlc.governance.fallback import FallbackChain
 from ai_sdlc.governance.rollback import commit_paths, paths_dirty, rollback_task
 from ai_sdlc.observability.audit import AuditLog
@@ -473,6 +473,11 @@ def cmd_summarize(args) -> int:
 
 def cmd_push(args) -> int:
     ws = _require_workspace(args.workspace)
+    # never ask a human to approve an impossible action: check the remote first
+    if not has_remote(ws.root):
+        print("error: no git remote configured - nothing to push to", file=sys.stderr)
+        print("add one first: git remote add origin <repository-url>", file=sys.stderr)
+        return 1
     doc = PlanDocument.load(ws.plan_path)
     branch = doc.meta.get("branch") or current_branch(ws.root)
     if not branch:

@@ -285,6 +285,18 @@ def test_cli_develop_is_primary_and_run_is_alias(tmp_workspace, capsys):
     assert "completed=1" in out
 
 
+def test_push_without_remote_fails_before_asking(tmp_workspace, capsys):
+    _seed(tmp_workspace)
+    _make_git(tmp_workspace)  # repo exists, but no remote
+    rc = main(["push", "--workspace", str(tmp_workspace)])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "no git remote" in captured.err
+    assert "git remote add origin" in captured.err
+    # the approval question must never have been asked
+    assert "Push branch" not in captured.out
+
+
 def test_cli_status_empty_plan(tmp_workspace, capsys):
     main(["init", "--workspace", str(tmp_workspace)])
     assert main(["status", "--workspace", str(tmp_workspace)]) == 0
