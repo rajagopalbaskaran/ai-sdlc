@@ -37,6 +37,10 @@ from ai_sdlc.state.plan import PlanDocument, Task
 from ai_sdlc.workspace import Workspace
 
 
+def _emit_json(payload: dict) -> None:
+    print(json.dumps(payload, indent=2))
+
+
 def _load_config(ws: Workspace) -> dict:
     path = ws.state_dir / "config.yaml"
     if path.is_file():
@@ -86,12 +90,14 @@ def _commit_snapshot(
     marker: str,
     message: str,
     enforce: bool = False,
+    quiet: bool = False,
 ) -> bool:
     """Version stage artifacts so downstream stages derive from git-frozen
     inputs. Returns False only when enforce=True and a human explicitly
-    declines in ask mode."""
+    declines in ask mode. quiet keeps stdout clean for --json callers."""
     if not (ws.root / ".git").is_dir():
-        print("note: workspace is not a git repository - stage artifacts are not versioned")
+        if not quiet:
+            print("note: workspace is not a git repository - stage artifacts are not versioned")
         return True
 
     def _has_content(path: Path) -> bool:
@@ -105,7 +111,8 @@ def _commit_snapshot(
         return True
     mode = config.get("commit_mode", "auto")
     if mode == "off":
-        print(f"note: commit_mode off - {marker} snapshot not committed")
+        if not quiet:
+            print(f"note: commit_mode off - {marker} snapshot not committed")
         return True
     if mode == "ask":
         decision = request_approval(f"Commit the {marker} snapshot?")
@@ -123,7 +130,8 @@ def _commit_snapshot(
     committed = commit_paths(ws.root, paths, marker, message)
     audit.event("commit", task=f"{marker}-snapshot", committed=committed, files=paths)
     if committed:
-        print(f"committed {marker} snapshot ({', '.join(paths)})")
+        if not quiet:
+            print(f"committed {marker} snapshot ({', '.join(paths)})")
     else:
         print(f"warning: {marker} snapshot commit failed; see git status", file=sys.stderr)
     return True
@@ -342,6 +350,20 @@ def cmd_run(args) -> int:
 def cmd_status(args) -> int:
     ws = _require_workspace(args.workspace)
     doc = PlanDocument.load(ws.plan_path)
+    if getattr(args, "json", False):
+        _emit_json({
+            "tasks": [
+                {
+                    "id": t.id,
+                    "status": t.status,
+                    "persona": t.persona,
+                    "depends_on": t.depends_on,
+                    "title": t.title,
+                }
+                for t in doc.tasks
+            ]
+        })
+        return 0
     if not doc.tasks:
         print("no tasks in the implementation plan yet")
         return 0
@@ -495,8 +517,12 @@ def cmd_test(args) -> int:
     audit = AuditLog(ws.runs_dir, time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
     audit.event("stage_started", stage="test")
     all_ok = True
+    results: list[dict] = []
+    # in json mode the only thing on stdout may be the json document
+    quiet = getattr(args, "json", False)
     for command in commands:
-        print(f"running: {command}")
+        if not quiet:
+            print(f"running: {command}")
         started = time.time()
         try:
             proc = subprocess.run(
@@ -515,10 +541,13 @@ def cmd_test(args) -> int:
             ok, tail = False, "timed out"
         seconds = round(time.time() - started)
         audit.event("test_command", command=command, ok=ok, seconds=seconds, output_tail=tail)
-        print(f"  {'PASS' if ok else 'FAIL'} ({seconds}s)")
+        results.append({"command": command, "ok": ok, "seconds": seconds})
+        if not quiet:
+            print(f"  {'PASS' if ok else 'FAIL'} ({seconds}s)")
         if not ok:
             all_ok = False
-            print(tail[-1200:])
+            if not quiet:
+                print(tail[-1200:])
     audit.event("stage_completed", stage="test")
     audit.event(
         "decision",
@@ -526,6 +555,9 @@ def cmd_test(args) -> int:
         choice="pass" if all_ok else "fail",
         reasons=[f"{len(commands)} command(s) executed"],
     )
+    if getattr(args, "json", False):
+        _emit_json({"ok": all_ok, "commands": results})
+        return 0 if all_ok else 1
     if all_ok:
         print("all test commands passed")
         print("next: ai-sdlc validate (requirement-to-code check), then: ai-sdlc push")
@@ -560,7 +592,10 @@ def cmd_validate(args) -> int:
                     f"- {event.get('command')}: {'PASS' if event.get('ok') else 'FAIL'}"
                 )
 
-    engine = Engine(ws, _build_engine_adapter(ws, config), config, echo=True)
+    # in json mode the only thing on stdout may be the json document, so the
+    # live audit echo is suppressed (the audit file still records everything)
+    quiet = getattr(args, "json", False)
+    engine = Engine(ws, _build_engine_adapter(ws, config), config, echo=not quiet)
     body = (
         "Validate the implemented code in this workspace against the ORIGINAL "
         "requirement below. Produce a markdown validation report containing:\n"
@@ -584,7 +619,11 @@ def cmd_validate(args) -> int:
         persona="validator",
         body=body,
     )
-    print(f"validating via {config.get('adapter', 'mock')} (may take a few minutes; Ctrl+C is safe)...")
+    if not quiet:
+        print(
+            f"validating via {config.get('adapter', 'mock')} "
+            "(may take a few minutes; Ctrl+C is safe)..."
+        )
     engine.audit.event("stage_started", stage="validate")
     engine.audit.event("task_started", task="VALIDATE", persona="validator")
     before = snapshot(ws.root)
@@ -605,7 +644,18 @@ def cmd_validate(args) -> int:
         [str(report.relative_to(ws.root))],
         "validation",
         "requirement-to-code validation report",
+        quiet=quiet,
     )
+    if getattr(args, "json", False):
+        text = result.output
+        clean = "MISSING" not in text and "PARTIAL" not in text
+        _emit_json({
+            "ok": clean,
+            "report": str(report),
+            "missing": text.count("MISSING"),
+            "partial": text.count("PARTIAL"),
+        })
+        return 0 if clean else 1
     print(f"validation report written to {report}")
     if "MISSING" in result.output or "PARTIAL" in result.output:
         print("gaps found - review the report; plan-level gaps: ai-sdlc replan; execution fixes: ai-sdlc develop")
@@ -653,12 +703,20 @@ def cmd_push(args) -> int:
         return 1
     audit = AuditLog(ws.runs_dir, time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
     decision = "approve" if args.yes else request_approval(f"Push branch {branch} to origin?")
-    audit.event("approval", gate="push", decision=decision)
+    audit.event(
+        "approval",
+        gate="push",
+        decision=decision,
+        channel="ide_session" if args.yes else "stdin",
+    )
     if decision != "approve":
         print("push not approved; nothing sent")
         return 1
     pushed, detail = push_branch(ws.root, branch)
     audit.event("push", branch=branch, ok=pushed, detail=detail)
+    if getattr(args, "json", False):
+        _emit_json({"ok": pushed, "branch": branch, "detail": detail})
+        return 0 if pushed else 1
     if not pushed:
         print(f"push failed: {detail}", file=sys.stderr)
         return 1
@@ -750,9 +808,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="re-authorize blocked tasks without prompting (for non-interactive use)",
     )
 
-    sub.add_parser("test", parents=[common], help="run the project's test commands (mechanical, no LLM)")
-    sub.add_parser("validate", parents=[common], help="agent checks the code against the original requirement")
-    sub.add_parser("status", parents=[common], help="show task states")
+    p_test = sub.add_parser(
+        "test", parents=[common], help="run the project's test commands (mechanical, no LLM)"
+    )
+    p_test.add_argument("--json", action="store_true", help="machine-readable output")
+
+    p_validate = sub.add_parser(
+        "validate", parents=[common], help="agent checks the code against the original requirement"
+    )
+    p_validate.add_argument("--json", action="store_true", help="machine-readable output")
+
+    p_status = sub.add_parser("status", parents=[common], help="show task states")
+    p_status.add_argument("--json", action="store_true", help="machine-readable output")
     sub.add_parser("report", parents=[common], help="render audit log and metrics to markdown")
 
     p_rollback = sub.add_parser("rollback", parents=[common], help="revert one task's commit and mark it rolled_back")
@@ -768,6 +835,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_push = sub.add_parser("push", parents=[common], help="push the plan's feature branch to origin (human-gated)")
     p_push.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    p_push.add_argument("--json", action="store_true", help="machine-readable output")
 
     p_retry = sub.add_parser("retry", parents=[common], help="reset a blocked task to pending after fixing its cause")
     p_retry.add_argument("task_id", help="task id to make eligible again (e.g. T3)")

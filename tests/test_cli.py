@@ -524,3 +524,49 @@ def test_cli_rollback_without_yes_rejects_noninteractive(tmp_workspace):
     assert (tmp_workspace / "feature.py").exists()
     doc = PlanDocument.load(state / "plan" / "implementation-plan.md")
     assert doc.get("T1").status == "completed"
+
+
+def test_status_json_lists_tasks(tmp_workspace, capsys):
+    import json
+
+    _seed(tmp_workspace)
+    capsys.readouterr()
+    assert main(["status", "--json", "--workspace", str(tmp_workspace)]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["tasks"][0]["id"] == "T1"
+    assert data["tasks"][0]["status"] == "pending"
+
+
+def test_test_json_reports_command_results(tmp_workspace, capsys):
+    import json
+
+    state = _seed(tmp_workspace)
+    (state / "config.yaml").write_text(
+        'adapter: mock\ntest_commands:\n  - "exit 0"\n', encoding="utf-8"
+    )
+    capsys.readouterr()
+    assert main(["test", "--json", "--workspace", str(tmp_workspace)]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["ok"] is True
+    assert data["commands"][0]["command"] == "exit 0"
+
+
+def test_validate_json_emits_only_json_in_a_git_repo(tmp_workspace, capsys):
+    """Regression: the validation snapshot commit used to print prose onto
+    stdout ahead of the json document, which broke every machine consumer."""
+    import json
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_workspace, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=tmp_workspace, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_workspace, check=True)
+
+    state = _seed(tmp_workspace)
+    (state / "plan" / "requirement-analysis.md").write_text("# Analysis\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_workspace, check=True)
+    subprocess.run(["git", "commit", "-qm", "seed"], cwd=tmp_workspace, check=True)
+    capsys.readouterr()
+
+    main(["validate", "--json", "--workspace", str(tmp_workspace)])
+    data = json.loads(capsys.readouterr().out)
+    assert set(data) == {"ok", "report", "missing", "partial"}
