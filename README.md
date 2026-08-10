@@ -205,7 +205,9 @@ ai-sdlc summarize                  # generate the engineering summary
 Session mode (interactive / IDE) adds:
 
 ```
-ai-sdlc install-commands [--force] # install the /ai-sdlc slash command
+ai-sdlc install-commands [--user] [--force]
+                                   # install the /ai-sdlc slash command
+                                   # --user: ~/.claude/commands (every project)
 ai-sdlc branch [--use <name>]      # show the recommended branch, or pin and check it out
 ai-sdlc remote [--set <url>]       # show or set origin (generated projects have none)
 ai-sdlc approve --gate plan|deploy_ready [--revoke]
@@ -265,10 +267,53 @@ With it set, a pass claim whose command exits non-zero is downgraded to a failed
 attempt and consumes a retry. With it unset, the claim is taken at face value
 and the audit records `verified: false` - honest, but weak. Configure it.
 
-**Getting started in the IDE:** `ai-sdlc init` installs
-`.claude/commands/ai-sdlc.md` into the project, so `/ai-sdlc develop`,
-`/ai-sdlc plan`, `/ai-sdlc validate` and the rest are available immediately. An
-existing command file is never overwritten without `--force`.
+### Enabling /ai-sdlc in the IDE
+
+`/ai-sdlc` is a Claude Code slash command backed by a single markdown file.
+Claude Code only offers commands it can find on disk, so the file has to exist
+in one of two places before the command appears in the picker.
+
+**Option A - every project (recommended):**
+
+```
+ai-sdlc install-commands --user      # writes ~/.claude/commands/ai-sdlc.md
+```
+
+**Option B - one project only:**
+
+```
+cd path/to/your-project
+ai-sdlc install-commands             # writes ./.claude/commands/ai-sdlc.md
+```
+
+`ai-sdlc init` also performs Option B automatically for the project it
+initializes. `install-commands` does not require an initialized workspace -
+wanting `/ai-sdlc` is usually what precedes running `/ai-sdlc init`.
+
+Four things that decide whether it actually shows up:
+
+1. **The framework must be installed** and `ai-sdlc` on your PATH
+   (`ai-sdlc --help`). A `pip install -e .` checkout works too, and picks up
+   template changes without reinstalling.
+2. **Project-scoped commands are read from the session's root directory.** If
+   you open Claude Code on a parent folder, a command file inside a
+   subdirectory is not found. This is the usual reason `/ai-sdlc` is missing.
+   Option A avoids it entirely.
+3. **Open Claude Code on the target project.** The command file passes
+   `--workspace .`, which resolves to the session's directory - point it at the
+   project you want built, not at a folder above it.
+4. **Restart the session** if a newly written command file does not appear in
+   the picker.
+
+Verify with:
+
+```
+ls ~/.claude/commands/ai-sdlc.md        # Option A
+ls .claude/commands/ai-sdlc.md          # Option B
+```
+
+An existing command file is never overwritten without `--force`, so local edits
+to the prompt survive reinstalls.
 
 **Publishing a generated project.** Projects the framework creates have no git
 remote, so `push` has nothing to publish to. Create the repository on GitHub,

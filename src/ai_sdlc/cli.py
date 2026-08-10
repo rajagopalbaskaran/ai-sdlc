@@ -34,7 +34,7 @@ from ai_sdlc.orchestrator.dag import CycleError
 from ai_sdlc.orchestrator.engine import Engine
 from ai_sdlc.orchestrator.replan import extract_header, merge, render_plan
 from ai_sdlc.state.plan import PlanDocument, Task
-from ai_sdlc.workspace import Workspace
+from ai_sdlc.workspace import Workspace, install_command_file, user_commands_dir
 
 
 def _emit_json(payload: dict) -> None:
@@ -196,12 +196,16 @@ def cmd_init(args) -> int:
 
 
 def cmd_install_commands(args) -> int:
-    ws = _require_workspace(args.workspace)
-    installed = ws.install_commands(force=args.force)
+    """Deliberately does NOT require an initialized workspace: wanting
+    /ai-sdlc is usually what precedes running /ai-sdlc init."""
+    commands_dir = user_commands_dir() if args.user else Workspace(args.workspace).commands_dir
+    installed = install_command_file(commands_dir, force=args.force)
     if installed:
         print(f"installed {installed}")
+        scope = "every project" if args.user else "this project"
+        print(f"/ai-sdlc is now available in {scope} - restart Claude Code if it does not appear")
     else:
-        print(f"{ws.commands_dir / 'ai-sdlc.md'} already exists; use --force to overwrite")
+        print(f"{commands_dir / 'ai-sdlc.md'} already exists; use --force to overwrite")
     return 0
 
 
@@ -928,6 +932,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_cmds.add_argument(
         "--force", action="store_true", help="overwrite an existing command file"
+    )
+    p_cmds.add_argument(
+        "--user",
+        action="store_true",
+        help="install to ~/.claude/commands so /ai-sdlc works in every project",
     )
 
     return parser
