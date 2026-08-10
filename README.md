@@ -202,6 +202,83 @@ ai-sdlc push [--yes]               # push the feature branch to origin
 ai-sdlc summarize                  # generate the engineering summary
 ```
 
+Session mode (interactive / IDE) adds:
+
+```
+ai-sdlc install-commands [--force] # install the /ai-sdlc slash command
+ai-sdlc branch [--use <name>]      # show the recommended branch, or pin and check it out
+ai-sdlc remote [--set <url>]       # show or set origin (generated projects have none)
+ai-sdlc approve --gate plan|deploy_ready [--revoke]
+                                   # record an approval taken in the IDE chat
+ai-sdlc session start|status|end   # open, inspect, close a stepwise run
+ai-sdlc next                       # ask the orchestrator for the next task
+ai-sdlc report-task --task <id> --result pass|fail [--error "..."]
+                                   # report an outcome; independently verified
+```
+
+`--json` is available on `status`, `test`, `validate`, `push`, and every session
+command. In json mode stdout carries the json document and nothing else.
+
+## Two ways to run: headless or in the IDE
+
+The same engine, the same plan file, two front-ends. Both write the same state
+and are mutually resumable - start headless, hit a task that will not compile,
+finish it in the IDE.
+
+**Headless** (`ai-sdlc develop`): the Python orchestrator drives and dispatches
+each task to Claude Code as a subprocess. Unattended, good for CI and long runs.
+You see failures after the fact, in the audit log.
+
+**Session** (`/ai-sdlc develop`): the interactive Claude Code session does the
+work, and Python answers one question at a time. Edits land in your diff view,
+compile errors appear in your terminal, and you can interrupt and correct
+mid-task.
+
+```
+ai-sdlc next          -> Python picks the task (DAG, gates, retry budget),
+                         marks it in_progress, snapshots the tree, and writes
+                         .ai-sdlc/plan/current-task.md with the persona, the
+                         project profile, the knowledge base, and any prior error
+
+  ... the session edits code, with you watching and correcting ...
+
+ai-sdlc report-task   -> Python diffs the tree, runs the policy checks, re-runs
+                         task_verify_command and derives pass/fail from its exit
+                         code, then sets status, commits, and audits
+```
+
+**What stays in Python:** task selection, the dependency graph, entry and exit
+gates, the retry budget, policy guardrails, per-task commits, rollback, and the
+audit log. The session never writes plan yaml, never runs raw git, and never
+approves a gate on its own.
+
+**Why `task_verify_command` matters.** An agent reporting on its own work will
+report success it did not earn, so `--result pass` is treated as a claim, not
+evidence. Set the key in `.ai-sdlc/config.yaml` to a fast compile or test
+command:
+
+```yaml
+task_verify_command: "cd backend && mvn -q compile"
+```
+
+With it set, a pass claim whose command exits non-zero is downgraded to a failed
+attempt and consumes a retry. With it unset, the claim is taken at face value
+and the audit records `verified: false` - honest, but weak. Configure it.
+
+**Getting started in the IDE:** `ai-sdlc init` installs
+`.claude/commands/ai-sdlc.md` into the project, so `/ai-sdlc develop`,
+`/ai-sdlc plan`, `/ai-sdlc validate` and the rest are available immediately. An
+existing command file is never overwritten without `--force`.
+
+**Publishing a generated project.** Projects the framework creates have no git
+remote, so `push` has nothing to publish to. Create the repository on GitHub,
+then:
+
+```
+ai-sdlc remote --set https://github.com/<you>/<project>.git
+ai-sdlc push            # still asks before publishing
+```
+
 ## Architecture Overview
 
 ```mermaid

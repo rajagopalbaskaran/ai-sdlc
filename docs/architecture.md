@@ -72,6 +72,53 @@ Interrupting at any point is safe: state on disk stays consistent and
 `replan` diffs the proposal against the plan, protects completed tasks,
 revises pending ones, and routes the result through the approval gate again.
 
+## Session mode (interactive / IDE)
+
+Headless mode inverts nothing: the engine drives and Claude Code is a
+subprocess worker. Session mode inverts only the execution half - the
+interactive Claude Code session does the work, and the engine answers one
+question at a time through `SessionEngine` (`orchestrator/session.py`):
+
+```
+ai-sdlc session start  -> cycle check, crash recovery, stale-analysis gate,
+                          plan-approval gate, branch-pin requirement
+ai-sdlc next           -> pick the eligible task, mark it in_progress, snapshot
+                          the tree, write .ai-sdlc/plan/current-task.md
+   (the session edits code in the IDE, where a human can see and correct it)
+ai-sdlc report-task    -> snapshot diff -> policy guardrails -> re-run
+                          task_verify_command -> status, per-task commit, audit
+ai-sdlc session end    -> exit gate, run-record commit, session cleared
+```
+
+Everything the headless loop enforces still lives in Python. What moved is
+only who edits the files.
+
+**Why `.ai-sdlc/session.yaml` exists.** Each CLI call is a separate process, so
+there is no in-memory Engine to carry run identity between `next` and
+`report-task`. The session file persists the run id (so one audit file covers
+the whole run instead of one per invocation), the pinned branch, the retry
+counters, the last error per task, and the pre-task file snapshot used to
+compute what changed.
+
+**Three invariants**, enforced by code where possible and by the slash command's
+prompt where not:
+
+1. The session never writes plan yaml or `approvals.yaml`. The orchestrator is
+   their only writer.
+2. The session never runs raw git. Branch, commit, rollback, remote, and push
+   all go through the CLI so the audit trail stays complete and the plan's
+   `branch` meta never desyncs from HEAD.
+3. The session never self-approves. `ai-sdlc approve` records a human decision
+   taken in the IDE chat, tagged `channel: ide_session` in the audit so the
+   channel is distinguishable after the fact.
+
+**Where governance genuinely softens.** In headless mode the retry loop is a
+Python `while`; in session mode the loop lives in the command file's prompt.
+Python still enforces the retry budget, refuses a `next` while a task is in
+flight, and independently verifies every pass claim - but a session that simply
+stops calling `next` ends the run early. The exit gate reports that as `halted`
+rather than letting it pass silently.
+
 ## Control flow of a full lifecycle
 
 ```
