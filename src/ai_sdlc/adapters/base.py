@@ -31,9 +31,12 @@ class Adapter(ABC):
 def build_adapter(name: str, config: dict) -> Adapter:
     from ai_sdlc.adapters.claude_code import ClaudeCodeAdapter
     from ai_sdlc.adapters.mock import MockAdapter
+    from ai_sdlc.adapters.session import SessionAdapter
 
     if name == "mock":
         return MockAdapter()
+    if name == "session":
+        return SessionAdapter()
     if name == "claude-code":
         return ClaudeCodeAdapter(
             command=config.get("claude_command", "claude"),
@@ -41,4 +44,4 @@ def build_adapter(name: str, config: dict) -> Adapter:
             workdir=config.get("workdir"),
             persona_permissions=config.get("persona_permissions") or {},
         )
-    raise ValueError(f"unknown adapter {name!r}; available: mock, claude-code")
+    raise ValueError(f"unknown adapter {name!r}; available: mock, claude-code, session")

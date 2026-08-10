@@ -138,3 +138,16 @@ def test_persona_permission_config_override(monkeypatch, tmp_path):
     assert "--permission-mode" in captured["argv"]
     adapter.execute("developer", "ctx", make_task())
     assert "--permission-mode" not in captured["argv"]
+
+
+def test_session_adapter_refuses_to_execute():
+    import pytest
+
+    from ai_sdlc.adapters.base import build_adapter
+    from ai_sdlc.state.plan import Task
+
+    adapter = build_adapter("session", {})
+    assert adapter.name == "session"
+    task = Task(id="T1", title="One", status="pending")
+    with pytest.raises(RuntimeError, match="ai-sdlc next"):
+        adapter.execute("developer", "context", task)
