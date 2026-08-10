@@ -107,3 +107,17 @@ def test_cli_summarize_writes_file(tmp_workspace, capsys):
     out_path = tmp_workspace / ".ai-sdlc" / "engineering-summary.md"
     assert out_path.is_file()
     assert "Engineering Summary" in out_path.read_text(encoding="utf-8")
+
+
+def test_cli_summarize_commits_snapshot_in_git_workspace(tmp_workspace):
+    import subprocess
+
+    seed(tmp_workspace)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_workspace, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_workspace, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.local"], cwd=tmp_workspace, check=True)
+    assert main(["summarize", "--workspace", str(tmp_workspace)]) == 0
+    log = subprocess.run(
+        ["git", "log", "--format=%s"], cwd=tmp_workspace, capture_output=True, text=True
+    ).stdout
+    assert "[ai-sdlc:summary]" in log

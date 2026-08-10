@@ -608,9 +608,19 @@ def cmd_validate(args) -> int:
 
 def cmd_summarize(args) -> int:
     ws = _require_workspace(args.workspace)
+    config = _load_config(ws)
     markdown = generate_summary(ws)
     out = ws.state_dir / "engineering-summary.md"
     out.write_text(markdown, encoding="utf-8")
+    audit = AuditLog(ws.runs_dir, time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
+    _commit_snapshot(
+        ws,
+        config,
+        audit,
+        [str(out.relative_to(ws.root))],
+        "summary",
+        "engineering summary",
+    )
     print(f"engineering summary written to {out}")
     return 0
 
